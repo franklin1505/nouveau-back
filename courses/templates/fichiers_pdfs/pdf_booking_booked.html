@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>Details de la réservation</title>
+    <style>
+          body {
+              margin: 0; /* Supprime la marge par défaut de tout le corps de la page */
+              /* Autres styles globaux au besoin */
+            }
+
+            .invoice-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-top: 0; /* Supprime la marge supérieure */
+              padding: 0 15px;
+            }
+
+        .logo-container {
+          flex-basis: 50%; /* Occupe la moitié de l'espace disponible */
+          padding: 0 15px; /* Un peu de padding pour l'espacement */
+        }
+
+        .logo {
+          max-height: 100px; /* Hauteur maximale pour le logo */
+        }
+
+        .invoice-info {
+          flex-basis: 35%; /* Occupe l'autre moitié de l'espace disponible */
+          padding: 0 10px; /* Un peu de padding pour l'espacement */
+          text-align: left; /* Aligner le texte à gauche */
+        }
+
+        .invoice-info p {
+          margin-bottom: 0.15rem; /* Un peu d'espacement entre les paragraphes */
+          font-size: 0.75rem;
+        }
+
+        .invoice-separator {
+          border: none;
+          border-top: 1px solid #ccc; /* Une ligne subtile pour le séparateur */
+          margin-top: 1rem; /* Espacement au-dessus du séparateur */
+          margin-bottom: 1rem; /* Espacement en dessous du séparateur */
+        }
+
+        .emetteur-destinataire-container {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 1rem;
+        }
+
+        .emetteur,
+        .destinataire {
+          width: 48%; /* Ajustement pour éviter tout débordement */
+        }
+
+        .emetteur h6,
+        .destinataire h6 {
+          font-size: 1rem; /* Taille du titre */
+          margin-bottom: 1.5rem;
+          color: #009879;
+        }
+
+        .emetteur div,
+        .destinataire div {
+          font-size: 0.8rem; /* Taille de la police pour le reste du contenu */
+          margin-bottom: 0.35rem; /* Petit espacement entre les lignes */
+        }
+
+        /* Vous pouvez ajuster ces tailles de police en fonction de vos besoins */
+
+        .styled-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 25px 0;
+          font-size: 0.7em; /* Réduction de la taille de police pour la table */
+          box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .styled-table thead tr {
+          background-color: #3b3687; /* Ou toute autre couleur que vous souhaitez pour l'entête */
+          color: #ffffff;
+          text-align: left;
+        }
+
+        .styled-table th,
+        .styled-table td {
+          padding: 12px 15px;
+          vertical-align: top; /* Aligner le contenu en haut des cellules */
+        }
+        @page {
+          size: A4;
+          margin: 1cm;
+
+          @bottom-center {
+            content: element(footer);
+            {% comment %} content: "Ceci est un pied de page. Vous pouvez y ajouter des informations supplémentaires."; {% endcomment %}
+            font-size: 10pt;
+          }
+        }
+
+        .footer {
+          position: running(footer);
+          font-size: 0.5em;
+          text-align: center;
+          color: #6c757d;
+          /* Style pour votre pied de page */
+      }
+        .styled-table th {
+          white-space: nowrap; /* S'assure que le texte des en-têtes ne passe pas à la ligne */
+        }
+
+        /* Réduire les largeurs d'autres en-têtes et agrandir la colonne Description */
+        .styled-table th:nth-child(1), /* Type */
+        .styled-table th:nth-child(5), /* TVA */
+        .styled-table th:nth-child(6) {
+          /* Total HT */
+          width: 15%;
+        }
+
+        .styled-table th:nth-child(2) {
+          /* Description */
+          width: 50%; /* Donne plus d'espace à la colonne Description */
+        }
+
+        .styled-table th:nth-child(4) {
+          /* Description */
+          width: 5%; /* Donne plus d'espace à la colonne Description */
+        }
+
+        .styled-table th:nth-child(3) {
+          /* Prix(HT) */
+          width: 15%; /* Ajustez en fonction de vos besoins */
+        }
+
+        .styled-table tbody tr {
+          border-bottom: 1px solid #dddddd;
+        }
+        /* Retirer les couleurs alternées dans le tbody */
+        .styled-table tbody tr {
+          background-color: #ffffff; /* Ou retirez cette ligne pour utiliser le fond par défaut */
+        }
+
+        .styled-table tbody tr:last-of-type {
+          border-bottom: 2px solid #3b3687; /* Ou toute autre couleur que vous souhaitez pour la dernière ligne */
+        }
+
+        /* Add more custom styles as needed */
+
+        .payment-details {
+          text-align: right; /* Alignement du conteneur à droite */
+        }
+
+        .payment-details .detail {
+          font-size: 0.8em;
+          margin-bottom: 0.5rem; /* Espacement entre les détails */
+          text-align: left; /* Alignement du texte des détails à gauche */
+        }
+
+        .payment-details .detail strong {
+          font-weight: bold; /* Rendre le label en gras */
+        }
+
+        .badge-success {
+          background-color: #28a745; /* Couleur verte pour le statut "payé" */
+          color: white;
+        }
+
+        .badge-danger {
+          background-color: #dc3545; /* Couleur rouge pour le statut "impayé" */
+          color: white;
+        }
+
+        .payment-details .badge {
+          padding: 0.25rem 0.5rem; /* Espacement interne du badge */
+          border-radius: 0.25rem; /* Coins arrondis du badge */
+          font-size: 0.875rem; /* Taille de la police du badge */
+        }
+
+        .payment-details hr {
+          border: none; /* Supprimer la bordure par défaut */
+          height: 2px; /* Épaisseur du trait */
+          background-color: #000; /* Couleur du trait */
+          width: 100%; /* Largeur du trait */
+          margin: 1rem auto; /* Centrer le trait avec un espace au-dessus et en dessous */
+        }
+
+        .invoice-image {
+          max-width: 180px; /* Taille de l'image */
+        }
+
+        .invoice-details {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .invoice-section {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .detail-row {
+          display: flex;
+          justify-content: space-between;
+          width: 100%;
+          margin-bottom: 10px;
+        }
+        {% comment %} .footer-row {
+          display: flex;
+          justify-conten<div class="footer">
+          {{ facture.pied_de_page|safe }}
+      </div>t: center; /* Centrer les éléments horizontalement */
+          align-items: center; /* Centrer les éléments verticalement */
+          padding: 2rem 0; /* Ajouter de l'espace au-dessus et en dessous */
+        }
+
+        .footer-col {
+          width: 100%; /* Prendre toute la largeur disponible */
+        } {% endcomment %}
+
+        .couleur {
+          color: #3b3687;
+        }
+        {% comment %} .footer-text {
+          color: #6c757d; /* Couleur de texte 'muted' de Bootstrap */
+          font-size: 0.875rem; /* Taille de police similaire à 'small' de Bootstrap */
+          margin-top: 5rem; /* Espace au-dessus du texte */
+          margin-bottom: 5rem; /* Espace en dessous du texte */
+        } {% endcomment %}
+
+        .text-center {
+          text-align: center; /* Aligner le texte au centre */
+        }
+
+        .reservation-detail div {
+          margin-bottom: 10px; /* Ajoute de l'espace entre les éléments */
+        }
+        
+        .reservation-detail strong {
+          font-weight: bold; /* Met les labels en gras */
+        }
+        
+        .reservation-detail ul {
+          list-style-type: disc; /* Utilise des puces pour la liste des passagers */
+          padding-left: 20px; /* Ajoute de l'espace à gauche de la liste */
+          margin-top: 5px; /* Ajoute de l'espace au-dessus de la liste */
+        }
+        
+        .reservation-detail ul li {
+          margin-bottom: 5px; /* Ajoute de l'espace entre les éléments de la liste */
+        }
+        
+    </style>
+  </head>
+  <body>
+    <div class="footer">
+       {{ static_content.default_footer|safe }} 
+    </div>
+
+    <div class="invoice-header">
+      <div class="logo-container">
+        {% if business_info.logo_url %}
+        <div>
+          <img class="logo" src="{{ business_info.logo_url }}" alt="Logo de l'entreprise" />
+        </div>
+        {% endif %}
+      </div>
+      <div class="invoice-info">
+        <p>
+          Reservation #: <strong>{{reservation_details.booking_number }}</strong>
+        </p>
+        <p>Date: <strong>{{reservation_details.created_at}}</strong></p>
+      </div>
+    </div>
+    <hr class="invoice-separator" />
+
+    <p class="fs-5">{{ static_content.service_description }}</p>
+    <p class="fs-5">
+      {{ static_content.legal_notice_1 }} {{ static_content.legal_notice_2 }}
+    </p>
+    <p class="fs-5">{{ static_content.vehicle_rental_description }}</p>
+    <h4 class="my-3 couleur">DETAILS</h4>
+    <!-- Détails de facturation -->
+    <div class="table-container">
+      <table class="styled-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Course {{ forloop.counter }}</td>
+            <td>
+              <div class="reservation-detail">
+                <div><strong>Départ:</strong> {{ reservation_details.estimation_log.departure }}</div>
+                <div><strong>Destination:</strong> {{ reservation_details.estimation_log.destination  }}</div>
+                <div><strong>Date et Heure:</strong> {{  reservation_details.estimation_log.pickup_date  }}</div>
+                <div><strong>Infos passagers-bagages:</strong>  {{ reservation_details.number_of_passengers }} Personne(s); {{ reservation_details.number_of_luggages }} bags</div>
+                <div><strong>Véhicule:</strong> {{ reservation_details.vehicle.brand }} {{ reservation_details.vehicle.model }} ({{ reservation_details.vehicle.vehicle_type }})</div>
+                
+                {% if reservation_details.payment_method %}
+                <div><strong>Méthode de paiement:</strong> {{ reservation_details.payment_method }}</div>
+                {% endif %}
+
+                {% if reservation_details.flight_number %}
+                <div><strong>Numéro de vol/Train:</strong> {{ reservation_details.flight_number }}</div>
+                {% endif %}
+                {% if reservation_details.case_number %}
+                <div><strong>Numéro de dossier:</strong> {{ reservation_details.case_number }}</div>
+                {% endif %}
+                {% if reservation_details.meeting_place %}
+                <div><strong>Lieu de rendez-vous:</strong> {{ reservation_details.meeting_place }}</div>
+                {% endif %}
+                {% if reservation_details.message %}
+                <div><strong>Note:</strong> {{ reservation_details.message }}</div>
+                {% endif %}
+
+                {% if reservation_details.passengers %}
+                <div><strong>Liste des passagers ajoutés:</strong></div>
+                <ul>
+                  {% for passenger in reservation_details.passengers %}
+                  <li><strong>Nom: </strong> {{ passenger.name }} - <strong>Numero de telephone: </strong>{{ passenger.phone_number }}</li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+                
+                {% if reservation_details.estimate_attribute %}
+                <div><strong>Liste des attributs:</strong></div>
+                <ul>
+                  {% for attribute in reservation_details.estimate_attribute %}
+                  <li>{{ attribute.attribute_name }} ({{ attribute.quantity }} x €{{ attribute.unit_price }})</li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+
+              </div>
+            </td>
+                    
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Totals et informations de paiement avec image et détails séparés -->
+    <div class="container mt-5 mb-5">
+      <div class="invoice-section">
+        <!-- Colonne pour l'image -->
+        <div class="col-6"></div>
+
+        <!-- Colonne pour les détails de paiement -->
+        <div class="col-6">
+          <div class="payment-details">
+            <div class="detail amount">
+              Total Attributs:
+              <strong>€{{ reservation_details.total_attributes_cost|floatformat:2  }}</strong>
+            </div>
+            <div class="detail tax">
+              Total Trajet: <strong>€{{ reservation_details.total_trajet|floatformat:2}}</strong>
+            </div>            
+            <hr class="my-2" />
+            <div class="detail total">
+              Total TTC:
+              <strong class="couleur">€{{reservation_details.total_booking_cost|floatformat:2}}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="my-3 fs-6">
+      {{ static_content.pricing_details }}
+    </p>
+  </body>
+</html>

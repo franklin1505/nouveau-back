@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmation de Réservation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 0;
+        }
+
+        .email-container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h3, h5 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+        }
+
+        p {
+            line-height: 1.6;
+            color: #34495e;
+        }
+
+        a {
+            color: #2980b9;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            color: #95a5a6;
+            font-size: 0.9em;
+        }
+
+        .highlight {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <h3>Bonjour {{ recipient_name }},</h3>
+        <p>Nous avons le plaisir de vous confirmer que votre réservation a bien été enregistrée. Vous trouverez ci-joint un récapitulatif détaillé de votre réservation au format PDF.</p>
+
+        <!-- Place pour le fichier PDF (à traiter plus tard) -->
+        <p><strong>Fichier PDF joint :</strong> Détails de la réservation</p>
+        <a href="{{ pdf_url }}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+            Télécharger le PDF
+        </a>
+        <h5>Assistance :</h5>
+        <p>
+            Pour toute question ou demande, notre équipe est à votre disposition :
+            <br>
+            📧 E-mail : {{ business_info.email }}<br>
+            📞 Téléphone : {{ business_info.phone_number }}
+        </p>
+
+        <p>Nous vous remercions pour votre confiance et vous souhaitons un agréable voyage.</p>
+        
+        <div class="footer">
+            Cordialement,<br>
+            <strong>{{ business_info.name }}</strong><br>
+            {{ business_info.address }}
+        </div>
+    </div>
+</body>
+</html>

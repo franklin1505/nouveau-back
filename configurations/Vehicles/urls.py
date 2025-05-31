@@ -1,0 +1,84 @@
+from django.urls import path
+
+from configurations.Vehicles.views import (
+    AttributeDetailView,
+    AttributeListCreateView,
+    GlobalStatisticsView,
+    MeetingPlaceDetailView,
+    MeetingPlaceListCreateView,
+    StatisticsDetailView,
+    TariffRuleDetailView,
+    TariffRuleListCreateView,
+    VehicleListCreateAPIView,
+    VehicleRetrieveUpdateDeleteAPIView,
+    VehicleTariffRulesView,
+    VehicleTypeDetailView,
+    VehicleTypeListCreateView,
+)
+
+urlpatterns = [
+    path(
+        "",
+         VehicleListCreateAPIView.as_view(),
+         name="vehicle-list-create"
+    ),
+    path(
+        "<int:pk>/",
+        VehicleRetrieveUpdateDeleteAPIView.as_view(),
+        name="vehicle-detail"
+    ),
+    path(
+        "tariff-rules/",
+        TariffRuleListCreateView.as_view(),
+        name="tariff-rule-list-create",
+    ),
+    path(
+        '<int:vehicle_id>/tariff-rules/',
+         VehicleTariffRulesView.as_view(),
+         name='vehicle-tariff-rules'
+    ),
+    path(
+        "tariff-rules/<int:pk>/",
+        TariffRuleDetailView.as_view(),
+        name="tariff-rule-detail",
+    ),
+    path(
+        "vehicle-type/",
+        VehicleTypeListCreateView.as_view(),
+        name="vehicle-type-list-create",
+    ),
+    path(
+        "vehicle-type/<int:pk>/",
+        VehicleTypeDetailView.as_view(),
+        name="vehicle-type-detail",
+    ),
+    path(
+        "attributes/",
+        AttributeListCreateView.as_view(),
+        name="attribute-list-create"
+    ),
+    path(
+        "attributes/<int:pk>/",
+        AttributeDetailView.as_view(),
+        name="attribute-detail"
+    ),
+    path(
+        "meeting-places/",
+        MeetingPlaceListCreateView.as_view(),
+        name="meeting-place-list-create",
+    ),
+    path(
+        "meeting-places/<int:pk>/",
+        MeetingPlaceDetailView.as_view(),
+        name="meeting-place-detail",
+    ),
+    path("statistics/", 
+         GlobalStatisticsView.as_view(),
+         name="global-statistics"
+    ),
+    path(
+        "statistics/detail/",
+        StatisticsDetailView.as_view(),
+        name="statistics-detail"
+    ),
+]
