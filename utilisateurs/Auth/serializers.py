@@ -16,7 +16,6 @@ class BusinessSerializer(serializers.ModelSerializer):
         model = Business
         fields = ['id' ,'name', 'email', 'phone_number', 'address', 'business_type']
 
-
 class AdministratorSerializer(serializers.ModelSerializer):
     username = serializers.CharField(read_only=True)  # Généré automatiquement
     user_type = serializers.CharField(read_only=True, default="administrator")

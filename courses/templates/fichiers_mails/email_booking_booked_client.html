@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Confirmation de Réservation</title>
+    <title>{% if is_update %}Mise à jour de votre réservation{% else %}Confirmation de réservation{% endif %}</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -54,18 +54,80 @@
             color: #e74c3c;
             font-weight: bold;
         }
+
+        .booking-details {
+            background-color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+
+        .passenger-type {
+            background-color: #3498db;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
     <div class="email-container">
-        <h3>Bonjour {{ recipient_name }},</h3>
-        <p>Nous avons le plaisir de vous confirmer que votre réservation a bien été enregistrée. Vous trouverez ci-joint un récapitulatif détaillé de votre réservation au format PDF.</p>
+        {% if recipient_role == "client" %}
+            <h3>Bonjour {{ recipient_name }},</h3>
+            {% if is_update %}
+            <p>Votre réservation a été mise à jour. Voici les nouveaux détails :</p>
+            {% else %}
+            <p>Nous avons le plaisir de vous confirmer que votre réservation a bien été enregistrée.</p>
+            {% endif %}
+        {% else %}
+            <!-- Pour les passagers dans les réservations admin -->
+            <h3>Bonjour {{ recipient_name }},</h3>
+            {% if recipient_is_main %}
+                <span class="passenger-type">PASSAGER PRINCIPAL</span>
+                {% if is_update %}
+                <p>Les détails de votre réservation ont été mis à jour :</p>
+                {% else %}
+                <p>Vous avez été inscrit comme passager principal pour une réservation. Voici les détails :</p>
+                {% endif %}
+            {% else %}
+                <span class="passenger-type">PASSAGER</span>
+                {% if is_update %}
+                <p>Les détails de la réservation à laquelle vous participez ont été mis à jour :</p>
+                {% else %}
+                <p>Vous avez été inscrit comme passager pour une réservation. Voici les détails :</p>
+                {% endif %}
+            {% endif %}
+        {% endif %}
 
-        <!-- Place pour le fichier PDF (à traiter plus tard) -->
-        <p><strong>Fichier PDF joint :</strong> Détails de la réservation</p>
+        <div class="booking-details">
+            <p><strong>Numéro de réservation :</strong> {{ reservation_details.booking_number }}</p>
+            <p><strong>Trajet :</strong> {{ reservation_details.estimation_log.departure }} → {{ reservation_details.estimation_log.destination }}</p>
+            <p><strong>Date et heure :</strong> {{ reservation_details.estimation_log.pickup_date }}</p>
+            <p><strong>Véhicule :</strong> {{ reservation_details.vehicle.brand }} {{ reservation_details.vehicle.model }}</p>
+            {% if reservation_details.meeting_place and reservation_details.meeting_place != "Aucun lieu de rendez-vous spécifié" %}
+            <p><strong>Lieu de rendez-vous :</strong> {{ reservation_details.meeting_place }}</p>
+            {% endif %}
+            {% if reservation_details.flight_number %}
+            <p><strong>Numéro de vol/Train :</strong> {{ reservation_details.flight_number }}</p>
+            {% endif %}
+        </div>
+
+        {% if recipient_role == "client" %}
+        <p><strong>Montant total :</strong> €{{ reservation_details.total_booking_cost|floatformat:2 }}</p>
+        
+        {% if reservation_details.payment_instructions %}
+        <h5>Instructions de paiement :</h5>
+        <p>{{ reservation_details.payment_instructions }}</p>
+        {% endif %}
+        {% endif %}
+
         <a href="{{ pdf_url }}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-            Télécharger le PDF
+            Télécharger le récapitulatif PDF
         </a>
+
         <h5>Assistance :</h5>
         <p>
             Pour toute question ou demande, notre équipe est à votre disposition :
@@ -74,7 +136,11 @@
             📞 Téléphone : {{ business_info.phone_number }}
         </p>
 
+        {% if recipient_role == "client" %}
         <p>Nous vous remercions pour votre confiance et vous souhaitons un agréable voyage.</p>
+        {% else %}
+        <p>Nous vous souhaitons un agréable voyage.</p>
+        {% endif %}
         
         <div class="footer">
             Cordialement,<br>

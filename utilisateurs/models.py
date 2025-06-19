@@ -83,6 +83,19 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         self.otp_expires_at = None
         self.save()
         
+    def get_full_name(self):
+        """
+        Retourne le nom complet de l'utilisateur.
+        """
+        full_name = f"{self.first_name} {self.last_name}".strip()
+        return full_name if full_name else self.username
+
+    def get_short_name(self):
+        """
+        Retourne le prénom de l'utilisateur.
+        """
+        return self.first_name or self.username
+        
 class Administrator(CustomUser):
     role = models.CharField(
         max_length=50,

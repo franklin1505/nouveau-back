@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notification de Nouvelle Réservation</title>
+    <title>{% if is_update %}Mise à jour de Réservation{% else %}Nouvelle Réservation{% endif %}</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -54,15 +54,65 @@
             color: #e74c3c;
             font-weight: bold;
         }
+
+        .booking-type {
+            background-color: #ecf0f1;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+
+        .admin-badge {
+            background-color: #3498db;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        .client-badge {
+            background-color: #27ae60;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
     </style>
 </head>
 <body>
     <div class="email-container">
         <h3>Cher Manager,</h3>
-        <p>Une nouvelle réservation a été effectuée par {{ reservation_details.user.first_name }} {{ reservation_details.user.last_name }}. Veuillez trouver ci-joint un fichier PDF contenant les détails complets de cette réservation.</p>
+        
+        {% if is_update %}
+        <p>Une réservation a été <strong>mise à jour</strong>. Voici les nouveaux détails :</p>
+        {% else %}
+        <p>Une nouvelle réservation a été effectuée. Voici les détails :</p>
+        {% endif %}
 
-        <!-- Place pour le fichier PDF (à traiter plus tard) -->
-        <p><strong>Fichier PDF joint :</strong> Détails de la réservation</p>
+        <div class="booking-type">
+            <strong>Type de réservation :</strong>
+            {% if booking_creator.type == "admin" %}
+                <span class="admin-badge">RÉSERVATION ADMIN</span>
+                <br><small>Créée par : {{ booking_creator.name }}</small>
+            {% else %}
+                <span class="client-badge">RÉSERVATION CLIENT</span>
+                <br><small>Client : {{ booking_creator.name }}</small>
+            {% endif %}
+        </div>
+
+        <p><strong>Numéro de réservation :</strong> {{ reservation_details.booking_number }}</p>
+        <p><strong>Trajet :</strong> {{ reservation_details.estimation_log.departure }} → {{ reservation_details.estimation_log.destination }}</p>
+        <p><strong>Date :</strong> {{ reservation_details.estimation_log.pickup_date }}</p>
+        <p><strong>Montant total :</strong> €{{ reservation_details.total_booking_cost|floatformat:2 }}</p>
+
+        {% if reservation_details.passengers %}
+        <p><strong>Passagers ({{ reservation_details.passengers|length }}) :</strong></p>
+        <ul>
+            {% for passenger in reservation_details.passengers %}
+            <li>{{ passenger.name }}{% if passenger.email and passenger.email != "Non renseigné" %} ({{ passenger.email }}){% endif %}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
 
         <a href="{{ pdf_url }}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
             Télécharger le PDF
@@ -70,7 +120,11 @@
 
         <h5>Actions requises :</h5>
         <p>
+            {% if is_update %}
+            Merci de prendre note de ces modifications et d'assurer le suivi approprié.
+            {% else %}
             Merci de prendre les dispositions nécessaires pour assurer un suivi optimal de cette réservation.
+            {% endif %}
         </p>
 
         <div class="footer">

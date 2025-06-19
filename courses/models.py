@@ -31,21 +31,23 @@ class EstimateAttribute(models.Model):
         )
 
 class Passenger(models.Model):
-    """
-    Model for passengers.
-    """
     name = models.CharField(max_length=255, help_text="Name of the passenger.")
     phone_number = models.CharField(max_length=50, help_text="Phone number of the passenger.")
+    email = models.EmailField(blank=True, null=True, help_text="Email of the passenger.")  # ✅ NOUVEAU
+    is_main_client = models.BooleanField(default=False, help_text="Indicates if this passenger is the main client.")  # ✅ NOUVEAU
     client = models.ForeignKey(
         "utilisateurs.Client",
         on_delete=models.CASCADE,
         related_name="passengers",
+        null=True,  # ✅ PERMETTRE NULL pour les réservations admin
+        blank=True,
         help_text="Client associated with this passenger."
     )
-    created_at = models.DateTimeField(auto_now_add=True, help_text="Date when the passenger was added.")
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return self.name
+        main_indicator = " (Client principal)" if self.is_main_client else ""
+        return f"{self.name}{main_indicator}"
 
 class EstimationLog(models.Model):
     """
@@ -206,7 +208,7 @@ class Estimate(models.Model):
     number_of_luggages = models.CharField(max_length=100, null=True, blank=True, help_text="Number of luggages.")
     number_of_passengers = models.PositiveIntegerField(null=True, blank=True, help_text="Number of passengers.")
     case_number = models.CharField(max_length=100, null=True, blank=True, help_text="booking case number.")
-    
+    is_payment_pending = models.BooleanField(default=False)
     def __str__(self):
         return f"Estimate {self.id}: {self.departure_location} → {self.destination_location}"
     
@@ -429,7 +431,8 @@ class Booking(models.Model):
     NOT_CANCELLED = "not_cancelled"
     CANCELLATION_REQUESTED = "cancellation_requested"
     CANCELLED = "cancelled"
-
+    LATER = "later"
+    NOW = "now"
 
     STATUS_CHOICES = (
         (PENDING, "Pending"),
@@ -454,6 +457,11 @@ class Booking(models.Model):
         (CANCELLATION_REQUESTED, "Cancellation Requested"),
         (CANCELLED, "Cancelled"),
     )
+    PAYMENT_TIMING_CHOICES = [
+        (LATER, 'Deferred Payment'),  
+        (NOW, 'Immediate Payment'),
+    ]
+    
 
     # Fields
     is_driver_paid = models.BooleanField(default=False, help_text="Indicates if the driver has been paid.")
@@ -505,6 +513,12 @@ class Booking(models.Model):
         choices=BILLING_STATUS_CHOICES,
         default=BILLING_NOT_INVOICED,
         help_text="Billing status of the booking."
+    )
+    payment_timing = models.CharField(
+        max_length=10,
+        choices=PAYMENT_TIMING_CHOICES,
+        default=LATER,  # ✅ DÉFAUT = 'later'
+        help_text="Indique quand le paiement sera effectué"
     )
     created_at = models.DateTimeField(auto_now_add=True, help_text="Date when the booking was created.")
 
