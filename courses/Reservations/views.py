@@ -4,8 +4,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated , AllowAny
 from courses.Reservations.helpers import (
-    create_booking_with_payment_timing, create_response, format_booking_data, format_booking_validation_response, get_booking_email_context_and_send_emails, get_payment_instructions, get_payment_notes, handle_api_exceptions, log_booking_action, process_booking_data, update_estimation_and_create_estimate, update_existing_estimate,
-    validate_booking_data, update_estimation_tariff, calculate_booking_costs, validate_client_id_and_get_passengers
+    create_booking_with_payment_timing, create_response, format_booking_data, 
+    format_booking_validation_response, get_booking_email_context_and_send_emails, 
+    get_payment_instructions, get_payment_notes, handle_api_exceptions, 
+    handle_payment_creation_logic, handle_payment_update_logic, log_booking_action, 
+    process_booking_data, update_estimation_and_create_estimate, update_existing_estimate,
+    validate_booking_data, update_estimation_tariff, calculate_booking_costs, 
+    validate_client_id_and_get_passengers, validate_estimate_for_payment, 
+    validate_payment_request_data
 )
 from courses.Reservations.pdf_service import generate_booking_pdf, get_booking_html
 from courses.Reservations.serializers import PassengerListSerializer, PaymentSerializer, UpdateTariffSerializer
@@ -15,6 +21,7 @@ class BookingValidateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def validate_request_data(self, request):
+        """Valide les données de la requête"""
         data = request.data
         validated_data, errors = validate_booking_data(data, request=request)
         if errors:
@@ -44,11 +51,11 @@ class BookingValidateView(APIView):
             estimate = self.validate_estimate_for_modification(estimate_id, estimation_log_id)
             return self.handle_modification(request, validated_data, estimate)
         else:
-            # MODE CRÉATION (logique actuelle)
+            # MODE CRÉATION
             return self.handle_creation(request, validated_data)
 
     def handle_creation(self, request, validated_data):
-        """Logique de création existante"""
+        """Logique de création d'estimation"""
         user_choice_data = validated_data.get('user_choice', {})
         vehicle_id = user_choice_data.get('vehicle_id')
         standard_cost = user_choice_data.get('standard_cost')
@@ -132,7 +139,7 @@ class BookingValidateView(APIView):
         return Response(response_data, status=status.HTTP_200_OK)
 
     def handle_modification(self, request, validated_data, estimate):
-        """Logique de modification"""
+        """Logique de modification d'estimation"""
         user_choice_data = validated_data.get('user_choice', {})
         
         # Mise à jour du tarif si nécessaire
@@ -179,128 +186,40 @@ class BookingValidateView(APIView):
             )
 
 class BookingPaymentView(APIView):
+    """
+    Vue pour le paiement avec support de création/modification
+    
+    Modes supportés :
+    - Création : mode='create' (défaut)
+    - Modification : mode='update'
+    """
+    permission_classes = [IsAuthenticated]
+
     @handle_api_exceptions
     def post(self, request):
-        serializer = PaymentSerializer(data=request.data)
-        if not serializer.is_valid():
-            return create_response(
-                status_type="error",
-                message="Validation errors",
-                http_status=status.HTTP_400_BAD_REQUEST,
-                error=serializer.errors
-            )
-
-        estimate_id = serializer.validated_data['estimate_id']
-        payment_method_id = serializer.validated_data['payment_method']
-        payment_timing = serializer.validated_data.get('payment_timing', 'later')
-        code_promo = serializer.validated_data.get('code_promo')
-        compensation = serializer.validated_data.get('compensation', 0)
-        commission = serializer.validated_data.get('commission', 0)
-
-        estimate = Estimate.objects.filter(id=estimate_id).first()
-        if not estimate:
-            return create_response(
-                status_type="error",
-                message="Estimation non trouvée.",
-                http_status=status.HTTP_404_NOT_FOUND
-            )
-
-        # ✅ RÉCUPÉRATION du client_id dès le début
-        client_id = None
-        client_for_promo = None
+        """Gère les requêtes de paiement avec support création/modification"""
+        # 1. Validation des données d'entrée
+        validated_data = validate_payment_request_data(request.data)
         
-        # Essayer de récupérer le client depuis l'estimate
-        if hasattr(estimate, 'client') and estimate.client:
-            client_id = estimate.client.id
-            client_for_promo = estimate.client
-        # Sinon, essayer de récupérer depuis l'estimation_log
-        elif hasattr(estimate, 'estimation_log') and estimate.estimation_log and estimate.estimation_log.user:
-            user = estimate.estimation_log.user
-            client_id = user.id
-            # Pour admin, client_for_promo reste None (pas de promo code)
-            if user.user_type != 'administrator':
-                try:
-                    client_for_promo = user.client
-                except:
-                    client_for_promo = None
-
-        estimation_tariff = EstimationTariff.objects.filter(
-            estimation_log_id=estimate.estimation_log_id,
-            vehicle_id=estimate.user_choice.vehicle_id
-        ).first()
+        # 2. Validation de l'estimate
+        estimate_id = validated_data['estimate_id']
+        estimate = validate_estimate_for_payment(estimate_id)
         
-        if not estimation_tariff:
-            return create_response(
-                status_type="error",
-                message="Aucun tarif trouvé pour cette estimation et ce véhicule.",
-                http_status=status.HTTP_404_NOT_FOUND
-            )
+        # 3. Détermination du mode
+        mode = request.data.get('mode', 'create')
         
-        user_choice = {
-            'vehicle_id': estimate.user_choice.vehicle_id,
-            'selected_tariff': estimate.user_choice.selected_tariff.id if estimate.user_choice.selected_tariff else None,
-            'is_standard_cost': estimate.user_choice.is_standard_cost,
-            'standard_cost': float(estimation_tariff.standard_cost) if estimate.user_choice.is_standard_cost else None
-        }
-        
-        total_attributes_cost = float(sum(attr.total for attr in estimate.estimate_attribute.all()))
-        
-        # Recalcul avec les bons paramètres
-        cost_result = calculate_booking_costs(
-            user_choice=user_choice,
-            estimation_tariff=estimation_tariff,
-            client=client_for_promo,
-            total_attributes_cost=total_attributes_cost,
-            code_promo=code_promo,
-            compensation=compensation,
-            commission=commission
-        )
-
-        # Mise à jour de l'estimate
-        estimate.payment_method_id = payment_method_id
-        estimate.total_booking_cost = cost_result['total_booking_cost']
-        
-        if compensation > 0:
-            estimate.compensation = compensation
-            estimate.commission = 0
-        elif commission > 0:
-            estimate.commission = commission
-            estimate.compensation = 0
-            
-        if payment_timing == 'later':
-            estimate.is_payment_pending = True
-            message = "Booking validated, payment will be processed later"
-            payment_status_info = "Payment scheduled for later processing"
+        # 4. Traitement selon le mode
+        if mode == 'update':
+            result = handle_payment_update_logic(estimate, validated_data)
         else:
-            estimate.is_payment_pending = True
-            message = "Payment timing set to 'now' - processed as 'later' in current version"
-            payment_status_info = "Immediate payment requested (feature in development)"
-            
-        estimate.save()
-
-        # ✅ RÉPONSE ENRICHIE avec client_id et détails
-        response_data = {
-            "estimate_id": estimate_id,
-            "client_id": client_id,  # ✅ NOUVEAU
-            "base_cost": cost_result['selected_tariff'],
-            "additional_services_cost": total_attributes_cost,
-            "total_booking_cost": cost_result['total_booking_cost'],
-            "promotion_message": cost_result.get('promotion_message'),
-            "driver_sale_price": cost_result['driver_sale_price'],
-            "partner_sale_price": cost_result['partner_sale_price'],
-            "commission_applied": commission,
-            "compensation_applied": compensation,
-            "payment_method": payment_method_id,
-            "payment_timing": payment_timing,
-            "payment_status_info": payment_status_info,
-            "ready_for_booking": True
-        }
+            result = handle_payment_creation_logic(estimate, validated_data)
         
+        # 5. Retour de la réponse
         return create_response(
-            status_type="success",
-            message=message,
-            data=response_data,
-            http_status=status.HTTP_200_OK
+            status_type=result["status"],
+            message=result["message"],
+            data=result.get("data", {}),
+            http_status=result["http_status"]
         )
 
 class BookingCreateView(APIView):
@@ -333,18 +252,18 @@ class BookingCreateView(APIView):
                 http_status=status.HTTP_400_BAD_REQUEST
             )
         
-        # ✅ UTILISATION de la fonction corrigée
+        # Création de la réservation avec support admin
         booking = create_booking_with_payment_timing(data, payment_timing)
         user_id = request.user.id if request.user.is_authenticated else None
         log_booking_action(booking, user_id, "created")
         
         display_data = format_booking_data(booking=booking, include_request_data=False)
         
-        # ✅ AJOUTER payment_timing et instructions à la réponse
+        # Ajout des informations de paiement à la réponse
         display_data["display_data"]["payment_timing"] = payment_timing
         display_data["display_data"]["payment_instructions"] = get_payment_instructions(estimate.payment_method)
         
-        # ✅ OPTIONNEL: Ajouter les notes de paiement dans la réponse (pas dans le modèle)
+        # Notes de paiement optionnelles
         payment_notes = get_payment_notes(estimate.payment_method, payment_timing)
         display_data["display_data"]["payment_notes"] = payment_notes
         
@@ -377,6 +296,7 @@ class UpdateTariffView(APIView):
         estimation_tariff = EstimationTariff.objects.get(id=estimation_tariff_id)
         estimate = Estimate.objects.filter(estimation_log=estimation_tariff.estimation_log).first()
         total_booking_cost = None
+        
         if estimate:
             cost_result = calculate_booking_costs(
                 user_choice={
@@ -418,31 +338,21 @@ class UpdateTariffView(APIView):
             },
             http_status=status.HTTP_200_OK
         )
-# ✅ SOLUTION DÉFINITIVE - Remplacez votre vue PDF
+
 class DownloadBookingPDFView(APIView):
-    """
-    ✅ VUE PDF SIMPLIFIÉE utilisant le service dédié
-    Plus de problème de renderer ou de décorateur
-    """
+    """Vue pour télécharger le PDF de réservation"""
     permission_classes = [AllowAny]
 
     def get(self, request, booking_id):
-        """
-        Génère et retourne le PDF de la réservation
-        """
-        # Génération directe via le service
+        """Génère et retourne le PDF de la réservation"""
         return generate_booking_pdf(booking_id)
     
 class DebugBookingHTMLView(APIView):
-    """
-    Vue pour visualiser le HTML avant génération PDF (utile pour debugging)
-    """
+    """Vue pour visualiser le HTML avant génération PDF (utile pour debugging)"""
     permission_classes = [AllowAny]
 
     def get(self, request, booking_id):
-        """
-        Retourne le HTML généré pour vérification
-        """
+        """Retourne le HTML généré pour vérification"""
         html_string, error = get_booking_html(booking_id)
         
         if error:
@@ -451,7 +361,6 @@ class DebugBookingHTMLView(APIView):
         # Retourne le HTML directement dans le navigateur
         return HttpResponse(html_string, content_type='text/html')
 
-         
 class PassengerListView(APIView):
     permission_classes = [IsAuthenticated]
 

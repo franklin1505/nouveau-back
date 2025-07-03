@@ -262,6 +262,7 @@ def apply_rule_overrides(valid_rules):
 
     return final_rules
 
+
 def apply_adjustment(total_cost, adjustment_data):
     total_cost = Decimal(total_cost)
     if adjustment_data["adjustment_type"] == "discount":
@@ -274,10 +275,12 @@ def apply_adjustment(total_cost, adjustment_data):
         result = total_cost + adjustment_value
     else:
         result = total_cost
-    return float(result.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP))
+    # Changement ici : utiliser 2 décimales au lieu de 3
+    return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 def apply_package(package_data):
-    return float(Decimal(str(package_data["price"])).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP))
+    # Changement ici : utiliser 2 décimales au lieu de 3
+    return float(Decimal(str(package_data["price"])).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 def calculate_vehicle_pricing(vehicles, distances_and_durations, pickup_date, departure_coords, destination_coords, estimate_type):
     results = []
@@ -309,8 +312,10 @@ def calculate_vehicle_pricing(vehicles, distances_and_durations, pickup_date, de
                       float(price.price_per_km) * dist_parcourt_km +
                       float(price.delivery_fee) * dist_retour_km +
                       float(price.price_per_duration) / 60 * dur_parcourt_minutes)
-            calcul_tva = float(Decimal(str(calcul * vat_rate)).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP))
-            total_cost = float(Decimal(str(max(calcul + calcul_tva, price.default_fee or 0))).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP))
+            # Changement ici : utiliser 2 décimales au lieu de 3
+            calcul_tva = float(Decimal(str(calcul * vat_rate)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+            # Changement ici : utiliser 2 décimales au lieu de 3
+            total_cost = float(Decimal(str(max(calcul + calcul_tva, price.default_fee or 0))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
             pricing["standard_cost"].update({
                 "total_cost": total_cost,
@@ -331,10 +336,11 @@ def calculate_vehicle_pricing(vehicles, distances_and_durations, pickup_date, de
                     "rule_name": rule["name"],
                     "rule_description": rule["description"],
                     "rule_type": rule["rule_type"],
-                    "calculated_cost": current_cost,
+                    # Formatage à 2 décimales pour s'assurer de la cohérence
+                    "calculated_cost": round(current_cost, 2),
                     "available_to_all": rule["available_to_all"],
                     "specific_clients": rule["specific_clients"],
-                    "excluded_clients":rule["excluded_clients"], 
+                    "excluded_clients": rule["excluded_clients"], 
                 })
 
             pricing["applied_rules"] = applied_rules
@@ -416,7 +422,7 @@ def create_estimation_log_and_tariffs(response_data, user=None):
 
 def build_response_data(trip_data, distances_and_durations, vehicle_pricing_list, vehicle_availability_map, vehicles_queryset, user=None):
     """
-    Construit les données de réponse sans pricing_options.
+    Construit les données de réponse pour l'estimation.
     """
     vehicle_dict = {v.id: v for v in vehicles_queryset}
     
@@ -429,6 +435,19 @@ def build_response_data(trip_data, distances_and_durations, vehicle_pricing_list
             logger.warning(f"Vehicle ID {vehicle_id} not found in vehicles_queryset")
             continue
         
+        # Formatage des prix à 2 décimales dans le pricing
+        pricing_data = vp["pricing"].copy()
+        
+        # Formater le coût standard
+        if "standard_cost" in pricing_data and "total_cost" in pricing_data["standard_cost"]:
+            pricing_data["standard_cost"]["total_cost"] = round(pricing_data["standard_cost"]["total_cost"], 2)
+        
+        # Formater les coûts des règles appliquées
+        if "applied_rules" in pricing_data:
+            for rule in pricing_data["applied_rules"]:
+                if "calculated_cost" in rule:
+                    rule["calculated_cost"] = round(rule["calculated_cost"], 2)
+        
         vehicles_informations.append({
             "id": vehicle_id,
             "availability_type": vehicle_availability_map.get(vehicle_id, {}).get("availability_type", "unknown"),
@@ -438,59 +457,14 @@ def build_response_data(trip_data, distances_and_durations, vehicle_pricing_list
             "vehicle_type": vehicle.vehicle_type.name if vehicle.vehicle_type else None,
             "vehicle_name": f"{vehicle.brand} {vehicle.model}",
             "image": vehicle.image.url if vehicle.image else None,
-            "pricing": {
-                "standard_cost": {
-                    "vehicle_id": vehicle_id,
-                    "vehicle_name": f"{vehicle.brand} {vehicle.model}",
-                    "total_cost": vp["pricing"]["standard_cost"]["total_cost"]
-                },
-                "applied_rules": vp["pricing"]["applied_rules"]
-            }
+            "pricing": pricing_data
         })
 
-    response_data = {
-        "trip_informations": {
-            "pickup_date": trip_data["pickup_date"],
-            "departure_address": trip_data["departure_location"],
-            "destination_address": trip_data["destination_location"],
-            "waypoints": trip_data.get("destinationInputs", []),
-        },
-        "distances_and_durations": {
-            "dist_parcourt_km": distances_and_durations["dist_parcourt_km"],
-            "dur_parcourt_minutes": distances_and_durations["dur_parcourt_minutes"],
-        },
-        "vehicles_informations": vehicles_informations,
-        "user_informations": {"id": user.id, "type_utilisateur": user.user_type} if user else {},
-        "estimation_data": {},
+    # Formatage des distances à 2 décimales aussi
+    formatted_distances = {
+        "dist_parcourt_km": round(distances_and_durations["dist_parcourt_km"], 2),
+        "dur_parcourt_minutes": round(distances_and_durations["dur_parcourt_minutes"], 2),
     }
-    return response_data
-    """
-    Construit les données de réponse avec la nouvelle structure des options tarifaires.
-    """
-    vehicle_dict = {v.id: v for v in vehicles_queryset}
-    
-    vehicles_informations = []
-    for vp in vehicle_pricing_list:
-        vehicle_id = vp["vehicle_id"]
-        vehicle = vehicle_dict.get(vehicle_id)
-        
-        if not vehicle:
-            logger.warning(f"Vehicle ID {vehicle_id} not found in vehicles_queryset")
-            continue
-        
-        vehicles_informations.append({
-            "id": vehicle_id,
-            "availability_type": vehicle_availability_map.get(vehicle_id, {}).get("availability_type", "unknown"),
-            "availability_time": vehicle_availability_map.get(vehicle_id, {}).get("availability_time"),
-            "passenger_capacity": vehicle.passenger_capacity,
-            "luggage_capacity": vehicle.luggage_capacity,
-            "vehicle_type": vehicle.vehicle_type.name if vehicle.vehicle_type else None,
-            "vehicle_name": f"{vehicle.brand} {vehicle.model}",
-            "image": vehicle.image.url if vehicle.image else None,
-            "pricing": vp["pricing"],
-            # Supprimé : estimation_tariff_id (sera dans pricing_options)
-            "pricing_options": []  # Sera rempli après création des tarifs
-        })
 
     response_data = {
         "trip_informations": {
@@ -499,10 +473,7 @@ def build_response_data(trip_data, distances_and_durations, vehicle_pricing_list
             "destination_address": trip_data["destination_location"],
             "waypoints": trip_data.get("destinationInputs", []),
         },
-        "distances_and_durations": {
-            "dist_parcourt_km": distances_and_durations["dist_parcourt_km"],
-            "dur_parcourt_minutes": distances_and_durations["dur_parcourt_minutes"],
-        },
+        "distances_and_durations": formatted_distances,
         "vehicles_informations": vehicles_informations,
         "user_informations": {"id": user.id, "type_utilisateur": user.user_type} if user else {},
         "estimation_data": {},

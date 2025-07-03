@@ -1,10 +1,10 @@
 from rest_framework import serializers
-
 from configurations.models import Vehicle
 from courses.models import EstimationTariff, Passenger
 from utilisateurs.Auth.serializers import ClientSerializer
 from utilisateurs.models import CustomUser
 from django.core.exceptions import ValidationError
+import re
 
 class EstimationLogIdSerializer(serializers.Serializer):
     estimation_log = serializers.IntegerField()
@@ -12,23 +12,27 @@ class EstimationLogIdSerializer(serializers.Serializer):
 class UpdateTariffSerializer(serializers.Serializer):
     estimation_tariff_id = serializers.IntegerField()
     standard_cost = serializers.FloatField(min_value=0)
-
+    
 class PaymentSerializer(serializers.Serializer):
     estimate_id = serializers.IntegerField()
     payment_method = serializers.IntegerField()
     payment_timing = serializers.ChoiceField(
         choices=[('now', 'Now'), ('later', 'Later')],
-        default='later',  # ✅ NOUVEAU - Défaut 'later' pour V1
+        default='later',
         help_text="Indique si le paiement sera effectué maintenant ou plus tard"
+    )
+    mode = serializers.ChoiceField(
+        choices=[('create', 'Create'), ('update', 'Update')],
+        default='create',
+        required=False,
+        help_text="Mode: 'create' pour nouveau paiement, 'update' pour modification"
     )
     code_promo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     compensation = serializers.FloatField(required=False, default=0)
     commission = serializers.FloatField(required=False, default=0)
 
     def validate(self, data):
-        """
-        Validation pour s'assurer que compensation et commission ne sont pas tous les deux fournis
-        """
+        """Validation pour s'assurer que compensation et commission ne sont pas tous les deux fournis"""
         compensation = data.get('compensation', 0)
         commission = data.get('commission', 0)
         
@@ -41,7 +45,7 @@ class PaymentSerializer(serializers.Serializer):
 
 class UserChoiceSerializer(serializers.Serializer):
     vehicle_id = serializers.IntegerField()
-    estimation_tariff_id = serializers.IntegerField(required=False, allow_null=True)  # Nouveau champ
+    estimation_tariff_id = serializers.IntegerField(required=False, allow_null=True)
     selected_tariff = serializers.IntegerField(allow_null=True, required=False)
     is_standard_cost = serializers.BooleanField(default=False)
     standard_cost = serializers.FloatField(required=False, allow_null=True)
@@ -50,6 +54,7 @@ class UserChoiceSerializer(serializers.Serializer):
     def validate(self, data):
         vehicle = Vehicle.objects.get(id=data['vehicle_id'])
         
+        # Déterminer si l'utilisateur est admin
         try:
             user = self.context['request'].user
             user_type = getattr(user, 'user_type', 'client')
@@ -71,6 +76,7 @@ class UserChoiceSerializer(serializers.Serializer):
             except EstimationTariff.DoesNotExist:
                 raise ValidationError(f"Le tarif avec l'ID {data['estimation_tariff_id']} n'existe pas pour ce véhicule.")
 
+        # Validation pour admin_booking
         if admin_booking and is_admin:
             if vehicle.availability_type == 'on_demand':
                 if data.get('standard_cost') is None or data['standard_cost'] <= 0:
@@ -83,6 +89,7 @@ class UserChoiceSerializer(serializers.Serializer):
                     data['is_standard_cost'] = True
             return data
 
+        # Validation standard selon le type de véhicule
         if vehicle.availability_type == 'on_demand':
             if is_admin:
                 if data.get('standard_cost') is None or data['standard_cost'] <= 0:
@@ -131,11 +138,9 @@ class PassengerSerializer(serializers.Serializer):
             if not passenger.get('name') or not passenger.get('phone_number'):
                 raise serializers.ValidationError("Le nom et le numéro de téléphone sont requis pour un nouveau passager.")
             
-            # ✅ Validation de l'email si fourni
+            # Validation de l'email si fourni
             email = passenger.get('email')
             if email and email.strip():
-                # Validation simple de l'email
-                import re
                 email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
                 if not re.match(email_pattern, email.strip()):
                     raise serializers.ValidationError(f"L'email '{email}' n'est pas valide pour le passager {passenger.get('name', 'inconnu')}.")
@@ -177,7 +182,7 @@ class ClientInfoSerializer(serializers.Serializer):
         
         # Cas 2 : Username et password fournis
         elif 'username' in data and 'password' in data:
-            # On ne fait pas de validation supplémentaire ici, car la connexion sera gérée dans validate_client_info
+            # La validation sera gérée dans validate_client_info
             pass
         
         # Cas 3 : Nouvel utilisateur
@@ -201,9 +206,7 @@ class ClientDisplayDataSerializer(serializers.Serializer):
     address = serializers.SerializerMethodField()
 
     def get_user_type(self, obj):
-        """
-        Formate le user_type en utilisant get_client_type_display.
-        """
+        """Formate le user_type en utilisant get_client_type_display"""
         client_type_display = obj.get("client_type_display", "client")
         return f"client ({client_type_display})"
 
@@ -228,9 +231,7 @@ class ClientResponseSerializer(serializers.Serializer):
     request_data = ClientRequestDataSerializer()
 
     def to_representation(self, instance):
-        """
-        Formate les données en fonction du cas (existing_user, logged_user, new_user).
-        """
+        """Formate les données en fonction du cas (existing_user, logged_user, new_user)"""
         if 'existing_user' in instance:
             user = instance['existing_user']
             return {
@@ -248,7 +249,7 @@ class ClientResponseSerializer(serializers.Serializer):
             return {
                 "display_data": ClientDisplayDataSerializer(user_data).data,
                 "request_data": {
-                    "id": user_data.get("id"),  # Inclure l'ID récupéré
+                    "id": user_data.get("id"),
                     "username": user_data.get("username")
                 }
             }
@@ -302,7 +303,6 @@ class EstimateAttributeResponseSerializer(serializers.Serializer):
                 "total_attributes_cost": total_attributes_cost
             }
         }
-   
 
 class PassengerListSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -313,9 +313,7 @@ class PassengerListSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
     def to_representation(self, instance):
-        """
-        Formate les données du passager pour la réponse.
-        """
+        """Formate les données du passager pour la réponse"""
         representation = super().to_representation(instance)
         representation['created_at'] = instance['created_at'].isoformat()
         return representation

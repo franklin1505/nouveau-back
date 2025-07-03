@@ -2,14 +2,14 @@ from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.test import APIRequestFactory
-from configurations.models import Attribute, MeetingPlace, PaymentMethod, Vehicle
-from courses.models import AppliedTariff, Booking, BookingLog, Estimate, EstimateAttribute, EstimationLog, EstimationTariff, Passenger, UserChoice
+from configurations.models import Attribute, PaymentMethod, Vehicle
+from courses.models import Booking, BookingLog, Estimate, EstimateAttribute, EstimationLog, EstimationTariff, Passenger, UserChoice
 from parametrages.models import StaticContent, Urls
 from utilisateurs.Auth.views import LoginView, UserCreationView
 from utilisateurs.helpers import get_business_info, send_email
 from utilisateurs.models import Business, Client, CustomUser
 from django.db import transaction
-from courses.Reservations.serializers import ClientInfoSerializer, ClientResponseSerializer, EstimateAttributeResponseSerializer, EstimateAttributeSerializer, EstimationLogIdSerializer, PassengerResponseSerializer, PassengerSerializer, UserChoiceSerializer
+from courses.Reservations.serializers import ClientInfoSerializer, ClientResponseSerializer, EstimateAttributeResponseSerializer, EstimateAttributeSerializer, PassengerResponseSerializer, PassengerSerializer, PaymentSerializer, UserChoiceSerializer
 from django.utils import timezone
 from rest_framework.request import Request
 from decimal import Decimal
@@ -18,9 +18,7 @@ from django.conf import settings
 from urllib.parse import urljoin
 
 def handle_api_exceptions(view_func):
-    """
-    Décorateur pour gérer les exceptions dans les vues API.
-    """
+    """Décorateur pour gérer les exceptions dans les vues API"""
     def wrapper(request, *args, **kwargs):
         try:
             return view_func(request, *args, **kwargs)
@@ -39,9 +37,7 @@ def handle_api_exceptions(view_func):
     return wrapper
 
 def create_response(status_type, message, data=None, http_status=status.HTTP_200_OK, error=None):
-    """
-    Crée une réponse API standardisée.
-    """
+    """Crée une réponse API standardisée"""
     response_payload = {
         "status": status_type,
         "message": message,
@@ -53,32 +49,26 @@ def create_response(status_type, message, data=None, http_status=status.HTTP_200
     return Response(response_payload, status=http_status)
 
 def validate_serializer(serializer_class, data, error_key):
-    """
-    Valide les données avec un sérialiseur et retourne les données validées ou les erreurs.
-    """
+    """Valide les données avec un sérialiseur et retourne les données validées ou les erreurs"""
     serializer = serializer_class(data=data)
     if serializer.is_valid():
         return serializer.validated_data, None
     return None, {error_key: serializer.errors}
 
 def validate_client_info(client_data):
-    """
-    Valide les informations client (existant, connexion, ou nouveau).
-    ✅ SIMPLE : Admin n'a pas besoin de compte client
-    """
+    """Valide les informations client (existant, connexion, ou nouveau) avec support admin"""
     errors = {}
     validated_data = {}
 
     if 'existing_user' in client_data:
         custom_user = get_object_or_404(CustomUser, id=client_data['existing_user']['id'])
         
-        # ✅ SIMPLE : Si c'est un admin, pas besoin de profil Client
+        # Admin n'a pas besoin de profil Client
         if custom_user.user_type == 'administrator':
             user_data = client_data['existing_user']
             user_data['client_type_display'] = "Administrator"
             validated_data['user'] = {"existing_user": user_data}
         else:
-            # Pour les autres, on garde la logique normale
             client = get_object_or_404(Client, customuser_ptr_id=custom_user.id)
             user_data = client_data['existing_user']
             user_data['client_type_display'] = client.get_client_type_display()
@@ -96,7 +86,6 @@ def validate_client_info(client_data):
             user_info = login_response.data.get("data", {}).get("user_info", {})
             custom_user = get_object_or_404(CustomUser, id=user_info['user_id'])
             
-            # ✅ SIMPLE : Admin ou Client normal
             if custom_user.user_type == 'administrator':
                 client_type_display = "Administrator"
             else:
@@ -116,7 +105,6 @@ def validate_client_info(client_data):
             errors['user'] = "Échec de la connexion avec les identifiants fournis."
     
     elif 'new_user' in client_data:
-        # Cette partie reste identique (création de nouveaux clients)
         factory = APIRequestFactory()
         request = factory.post('/register/', data=client_data['new_user'], format='json')
         drf_request = Request(request)
@@ -145,17 +133,14 @@ def validate_client_info(client_data):
     return {}, errors
 
 def create_and_associate_passengers(user_id, passengers_data):
-    """
-    Crée et associe des passagers à un utilisateur.
-    ✅ SIMPLE : Support admin sans compte client
-    """
+    """Crée et associe des passagers à un utilisateur avec support admin"""
     user = get_object_or_404(CustomUser, id=user_id)
     passenger_ids = []
     display_data = []
 
-    # ✅ Pour admin : pas besoin de client, on crée les passagers "orphelins"
+    # Admin n'a pas de profil client, on crée les passagers "orphelins"
     if user.user_type == 'administrator':
-        client_for_passengers = None  # Admin n'a pas de profil client
+        client_for_passengers = None
     else:
         client_for_passengers = user.client
 
@@ -172,7 +157,6 @@ def create_and_associate_passengers(user_id, passengers_data):
 
     # Nouveaux passagers
     for new_passenger in passengers_data.get('new', []):
-        # ✅ CORRECTION : Gestion sécurisée de l'email
         email = new_passenger.get('email')
         if email:
             email = email.strip() or None
@@ -182,9 +166,9 @@ def create_and_associate_passengers(user_id, passengers_data):
         passenger = Passenger.objects.create(
             name=new_passenger['name'],
             phone_number=new_passenger['phone_number'],
-            email=email,  # ✅ email déjà traité
+            email=email,
             is_main_client=new_passenger.get('is_main_client', False),
-            client=client_for_passengers  # Peut être None pour admin
+            client=client_for_passengers
         )
         passenger_ids.append(passenger.id)
         display_data.append({
@@ -200,9 +184,7 @@ def create_and_associate_passengers(user_id, passengers_data):
     }
 
 def process_estimate_attributes(estimate_attributes_data):
-    """
-    Traite les attributs d'estimation.
-    """
+    """Traite les attributs d'estimation"""
     total_attributes_cost = 0
     estimate_attribute_ids = []
     display_data = []
@@ -239,10 +221,7 @@ def process_estimate_attributes(estimate_attributes_data):
     }
 
 def apply_commission_or_compensation(total_booking_cost, compensation=None, commission=None):
-    """
-    Applique la commission ou la compensation au coût total.
-    ✅ CORRECTION: Commission = pourcentage prélevé sur le prix client
-    """
+    """Applique la commission ou la compensation au coût total"""
     total_booking_cost = Decimal(str(total_booking_cost))
     
     if compensation is not None and compensation > 0:
@@ -252,11 +231,10 @@ def apply_commission_or_compensation(total_booking_cost, compensation=None, comm
         commission = Decimal('0')
         
     elif commission is not None and commission > 0:
-        # ✅ CORRECTION: Commission = pourcentage du prix client
-        # Le prix client reste inchangé, mais chauffeur/partenaire reçoivent moins
+        # Commission = pourcentage du prix client
         commission_amount = total_booking_cost * (Decimal(str(commission)) / Decimal('100'))
-        driver_sale_price = total_booking_cost - commission_amount  # ✅ CORRECT
-        partner_sale_price = total_booking_cost - commission_amount  # ✅ CORRECT
+        driver_sale_price = total_booking_cost - commission_amount
+        partner_sale_price = total_booking_cost - commission_amount
         compensation = Decimal('0')
         
     else:
@@ -272,6 +250,7 @@ def apply_commission_or_compensation(total_booking_cost, compensation=None, comm
     }
     
 def process_booking_data(validated_data):
+    """Traite les données de réservation et effectue les validations nécessaires"""
     errors = {}
     formatted_data = {}
 
@@ -337,10 +316,7 @@ def process_booking_data(validated_data):
     return formatted_data, errors
 
 def get_meeting_place_data(meeting_place_id):
-    """
-    Récupère les informations du lieu de rendez-vous.
-    ✅ CORRECTION: Gestion du cas où meeting_place_id est None
-    """
+    """Récupère les informations du lieu de rendez-vous"""
     from configurations.models import MeetingPlace
     
     if meeting_place_id is None:
@@ -367,9 +343,7 @@ def get_meeting_place_data(meeting_place_id):
         }
 
 def get_payment_method_data(payment_method_id):
-    """
-    Récupère les informations de la méthode de paiement.
-    """
+    """Récupère les informations de la méthode de paiement"""
     try:
         payment_method = PaymentMethod.objects.get(id=payment_method_id)
         payment_method_name = format_payment_method_name(payment_method.name)
@@ -384,9 +358,7 @@ def get_payment_method_data(payment_method_id):
         }
 
 def format_payment_method_name(name):
-    """
-    Formate le nom de la méthode de paiement en français.
-    """
+    """Formate le nom de la méthode de paiement en français"""
     payment_methods_mapping = {
         "onboard_payment": "Paiement à bord",
         "bank_transfer": "Virement bancaire",
@@ -397,9 +369,7 @@ def format_payment_method_name(name):
     return payment_methods_mapping.get(name, name)
 
 def get_estimation_log_data(estimation_log_id):
-    """
-    Récupère les informations de l'estimation.
-    """
+    """Récupère les informations de l'estimation"""
     try:
         estimation_log = EstimationLog.objects.get(id=estimation_log_id)
         return {
@@ -421,9 +391,7 @@ def get_estimation_log_data(estimation_log_id):
         }
 
 def update_estimation_and_create_estimate(estimation_log_id, user_id, is_code_promo_used, request_data):
-    """
-    Met à jour l'EstimationLog et crée une estimation.
-    """
+    """Met à jour l'EstimationLog et crée une estimation"""
     estimation_log = get_object_or_404(EstimationLog, id=estimation_log_id)
     user = get_object_or_404(CustomUser, id=user_id)
     estimation_log.user = user
@@ -440,9 +408,7 @@ def update_estimation_and_create_estimate(estimation_log_id, user_id, is_code_pr
     return create_estimate(request_data)
 
 def log_booking_action(booking, user_id, action, custom_message=None):
-    """
-    Enregistre une action dans les logs de réservation.
-    """
+    """Enregistre une action dans les logs de réservation"""
     user = get_object_or_404(CustomUser, id=user_id) if user_id else None
     predefined_messages = {
         "created": "La réservation a été créée avec succès.",
@@ -458,9 +424,7 @@ def log_booking_action(booking, user_id, action, custom_message=None):
     return BookingLog.objects.create(booking=booking, user=user, action=message)
 
 def get_business_info_for_pdf():
-    """
-    Récupère les informations de l'entreprise pour les PDF.
-    """
+    """Récupère les informations de l'entreprise pour les PDF"""
     default_business_info = {
         "name": "Votre Entreprise",
         "email": "support@votreentreprise.com",
@@ -483,13 +447,11 @@ def get_business_info_for_pdf():
     return business_info
 
 def get_selected_tariff(user_choice, estimation_tariff):
-    """
-    Retourne le tarif sélectionné.
-    """
+    """Retourne le tarif sélectionné"""
     if user_choice['is_standard_cost']:
         return estimation_tariff.standard_cost
     
-    # CORRECTION: Chercher l'AppliedTariff correct
+    # Chercher l'AppliedTariff correct
     from courses.models import AppliedTariff
     try:
         applied_tariff = AppliedTariff.objects.get(
@@ -498,53 +460,94 @@ def get_selected_tariff(user_choice, estimation_tariff):
         )
         return applied_tariff.calculated_cost
     except AppliedTariff.DoesNotExist:
-        # Fallback vers le tarif standard si l'applied_tariff n'existe pas
+        # Fallback vers le tarif standard
         return estimation_tariff.standard_cost
-    
-def validate_and_apply_promo_code(code_promo, client, estimation_tariff):
-    """
-    Valide et applique un code promo.
-    """
+
+def validate_and_apply_promo_code_new(code_promo, client_for_promo, estimation_tariff):
+    """Validation directe via le véhicule pour les codes promo"""
     try:
-        tariff_rule = estimation_tariff.rules.filter(
+        vehicle = Vehicle.objects.get(id=estimation_tariff.vehicle_id)
+        
+        # Chercher la règle directement dans le véhicule
+        tariff_rule = vehicle.tariff_rules.filter(
             rule_type="promo_code",
-            promo_code__code=code_promo
+            promo_code__code=code_promo,
+            active=True
         ).first()
-        if not tariff_rule or not tariff_rule.is_applicable(client, timezone.now()):
+        
+        if not tariff_rule:
             return None
+        
         promo_code = tariff_rule.promo_code
+        
+        # Vérifier les limites d'usage
         if promo_code.usage_limit and promo_code.usage_count >= promo_code.usage_limit:
             return None
+        
+        # Logique métier simplifiée
+        if tariff_rule.available_to_all:
+            return {
+                "percentage": promo_code.percentage or 0,
+                "fixed_amount": promo_code.fixed_amount or 0,
+                "promo_code_id": promo_code.id
+            }
+        
+        # Vérifier les clients spécifiques
+        if tariff_rule.specific_clients.exists():
+            if client_for_promo and tariff_rule.specific_clients.filter(id=client_for_promo.id).exists():
+                return {
+                    "percentage": promo_code.percentage or 0,
+                    "fixed_amount": promo_code.fixed_amount or 0,
+                    "promo_code_id": promo_code.id
+                }
+            return None
+        
+        # Vérifier les clients exclus
+        if tariff_rule.excluded_clients.exists():
+            is_excluded = client_for_promo and tariff_rule.excluded_clients.filter(id=client_for_promo.id).exists()
+            if not is_excluded:
+                return {
+                    "percentage": promo_code.percentage or 0,
+                    "fixed_amount": promo_code.fixed_amount or 0,
+                    "promo_code_id": promo_code.id
+                }
+            return None
+        
+        # Aucune restriction - accepter
         return {
-            "percentage": promo_code.percentage,
-            "fixed_amount": promo_code.fixed_amount,
+            "percentage": promo_code.percentage or 0,
+            "fixed_amount": promo_code.fixed_amount or 0,
             "promo_code_id": promo_code.id
         }
-    except Exception as e:
+        
+    except Exception:
         return None
 
 def calculate_final_cost(selected_tariff, promo_code_info, total_attributes_cost):
-    """
-    Calcule le coût final.
-    """
+    """Calcule le coût final avec code promo"""
+    from decimal import Decimal
+    
     final_cost = Decimal(str(selected_tariff))
+    
     if promo_code_info:
-        if promo_code_info['percentage']:
-            final_cost *= (Decimal('1') - Decimal(str(promo_code_info['percentage'])) / Decimal('100'))
-        if promo_code_info['fixed_amount']:
-            final_cost -= Decimal(str(promo_code_info['fixed_amount']))
+        if promo_code_info.get('percentage') and promo_code_info['percentage'] > 0:
+            percentage = Decimal(str(promo_code_info['percentage']))
+            reduction = final_cost * (percentage / Decimal('100'))
+            final_cost = final_cost - reduction
+            
+        if promo_code_info.get('fixed_amount') and promo_code_info['fixed_amount'] > 0:
+            fixed_amount = Decimal(str(promo_code_info['fixed_amount']))
+            final_cost = final_cost - fixed_amount
+    
     total_booking_cost = final_cost + Decimal(str(total_attributes_cost))
+    
     return {
         "total_booking_cost": float(max(total_booking_cost, Decimal('0'))),
         "total_attributes_cost": float(max(total_attributes_cost, Decimal('0')))
     }
-
-def update_estimation_tariff(estimation_tariff, standard_cost):
-    """
-    Met à jour les champs d'un EstimationTariff.
-    """
-    # CORRECTION: Convertir standard_cost en Decimal
     
+def update_estimation_tariff(estimation_tariff, standard_cost):
+    """Met à jour les champs d'un EstimationTariff"""
     standard_cost_decimal = Decimal(str(standard_cost))
     
     estimation_tariff.standard_cost = standard_cost_decimal
@@ -555,25 +558,22 @@ def update_estimation_tariff(estimation_tariff, standard_cost):
     return estimation_tariff
 
 def calculate_booking_costs(user_choice, estimation_tariff, client, total_attributes_cost, code_promo=None, compensation=None, commission=None, save_user_choice=False):
-    """
-    Calcule les coûts d'une réservation ou estimation.
-    ✅ CORRECTION: Gestion du client None + amélioration robustesse
-    """
+    """Calcule les coûts de réservation avec code promo et commission/compensation"""
     # Vérifier que l'applied_tariff existe avant de l'utiliser
     if user_choice.get('standard_cost') is not None and user_choice['is_standard_cost']:
         update_estimation_tariff(estimation_tariff, user_choice['standard_cost'])
 
     try:
         selected_tariff = get_selected_tariff(user_choice, estimation_tariff)
-    except Exception as e:
+    except Exception:
         # Si erreur avec applied_tariff, utiliser le tarif standard
         selected_tariff = estimation_tariff.standard_cost
         user_choice['is_standard_cost'] = True
 
-    # ✅ CORRECTION: Code promo seulement si client existe
+    # Validation et application du code promo
     promo_code_info = None
-    if code_promo and client:  # ✅ Vérifier que client n'est pas None
-        promo_code_info = validate_and_apply_promo_code(code_promo, client, estimation_tariff)
+    if code_promo:
+        promo_code_info = validate_and_apply_promo_code_new(code_promo, client, estimation_tariff)
     
     cost_result = calculate_final_cost(selected_tariff, promo_code_info, total_attributes_cost)
     commission_compensation_result = apply_commission_or_compensation(
@@ -628,9 +628,7 @@ def calculate_booking_costs(user_choice, estimation_tariff, client, total_attrib
     }
 
 def format_booking_data(validated_data=None, formatted_data=None, booking=None, include_request_data=True):
-    """
-    Formate les données de réservation ou d'estimation.
-    """
+    """Formate les données de réservation ou d'estimation"""
     display_data = {}
     request_data = {} if include_request_data else None
 
@@ -646,7 +644,7 @@ def format_booking_data(validated_data=None, formatted_data=None, booking=None, 
                 if include_request_data:
                     request_data[field] = value
 
-        # ✅ NOUVELLE LOGIQUE : Gestion admin vs client
+        # Gestion admin vs client
         if booking.client:
             # Réservation CLIENT normale
             display_data["user"] = {
@@ -836,21 +834,85 @@ def format_booking_data(validated_data=None, formatted_data=None, booking=None, 
         result["request_data"] = request_data
     return result
 
+def calculate_booking_costs_new(user_choice, estimation_tariff, client, total_attributes_cost, promo_code_info=None, compensation=None, commission=None, save_user_choice=False):
+    """Calcule les coûts avec promo_code_info pré-calculé"""
+    # Vérifier que l'applied_tariff existe avant de l'utiliser
+    if user_choice.get('standard_cost') is not None and user_choice['is_standard_cost']:
+        update_estimation_tariff(estimation_tariff, user_choice['standard_cost'])
 
+    try:
+        selected_tariff = get_selected_tariff(user_choice, estimation_tariff)
+    except Exception:
+        # Si erreur avec applied_tariff, utiliser le tarif standard
+        selected_tariff = estimation_tariff.standard_cost
+        user_choice['is_standard_cost'] = True
+
+    # Utiliser promo_code_info pré-calculé
+    cost_result = calculate_final_cost(selected_tariff, promo_code_info, total_attributes_cost)
+    commission_compensation_result = apply_commission_or_compensation(
+        cost_result["total_booking_cost"], compensation, commission
+    )
+    cost_result.update(commission_compensation_result)
+
+    # Génération du message promotionnel
+    promotion_message = None
+    is_code_promo_used = False
+    if promo_code_info:
+        is_code_promo_used = True
+        if promo_code_info['percentage']:
+            # Récupérer le code depuis l'ID pour le message
+            from configurations.models import PromoCode
+            try:
+                promo_code_obj = PromoCode.objects.get(id=promo_code_info['promo_code_id'])
+                promotion_message = (
+                    f"Le code promo « {promo_code_obj.code} » a permis d'appliquer une réduction de "
+                    f"{promo_code_info['percentage']}% sur le tarif de votre réservation."
+                )
+            except PromoCode.DoesNotExist:
+                promotion_message = f"Code promo appliqué : {promo_code_info['percentage']}% de réduction."
+        elif promo_code_info['fixed_amount']:
+            promotion_message = (
+                f"Code promo appliqué : réduction de {promo_code_info['fixed_amount']}€ "
+                f"sur le tarif de votre réservation."
+            )
+
+    user_choice_id = None
+    if save_user_choice:
+        from courses.models import AppliedTariff
+        selected_tariff_obj = None
+        if not user_choice['is_standard_cost'] and user_choice.get('selected_tariff'):
+            try:
+                selected_tariff_obj = AppliedTariff.objects.get(id=user_choice['selected_tariff'])
+            except AppliedTariff.DoesNotExist:
+                user_choice['is_standard_cost'] = True
+                
+        user_choice_instance = UserChoice.objects.create(
+            vehicle_id=user_choice['vehicle_id'],
+            selected_tariff=selected_tariff_obj,
+            is_standard_cost=user_choice['is_standard_cost']
+        )
+        user_choice_id = user_choice_instance.id
+
+    return {
+        "selected_tariff": selected_tariff,
+        "promo_code_info": promo_code_info,
+        "total_booking_cost": cost_result["total_booking_cost"],
+        "total_attributes_cost": cost_result["total_attributes_cost"],
+        "promotion_message": promotion_message,
+        "is_code_promo_used": is_code_promo_used,
+        "user_choice_id": user_choice_id,
+        "driver_sale_price": cost_result["driver_sale_price"],
+        "partner_sale_price": cost_result["partner_sale_price"],
+        "compensation": cost_result["compensation"],
+        "commission": cost_result["commission"]
+    }
+    
 def get_booking_email_context_and_send_emails(booking_id, display_data=None, is_update=False):
-    """
-    ✅ FONCTION PRINCIPALE SIMPLIFIÉE
-    Point d'entrée unique pour création ET mise à jour
-    Compatible avec l'ancienne interface mais utilise le nouveau système unifié
-    """
-    # Le paramètre display_data est ignoré car on reconstruit les données
-    # pour garantir la cohérence et éviter la redondance
+    """Point d'entrée unique pour création ET mise à jour d'emails"""
     send_unified_emails(booking_id, is_update)
     
 def validate_booking_data(data, request=None):
-    """
-    Validation des données de booking avec support de modification via estimate_id
-    """
+    """Validation des données de booking avec support de modification via estimate_id"""
     errors = {}
     validated_data = {}
 
@@ -983,40 +1045,12 @@ def validate_booking_data(data, request=None):
 
     return validated_data, errors  
 
-
 def create_booking_with_payment_timing(data, payment_timing='later'):
-    """
-    Crée une réservation avec payment_timing
-    ✅ SOLUTION SIMPLE : Admin = pas de client requis
-    """
+    """Crée une réservation avec payment_timing et support admin"""
     estimate = get_object_or_404(Estimate, id=data['estimate'])
     user = get_object_or_404(CustomUser, id=data['client'])
     
-    # ✅ SOLUTION SIMPLE : Si admin, pas de client
-    if user.user_type == 'administrator':
-        client_profile = None  # Pas de client pour les admins
-    else:
-        client_profile = user.client
-    
-    return Booking.objects.create(
-        compensation=data['compensation'],
-        commission=data['commission'],
-        driver_sale_price=data['driver_sale_price'],
-        partner_sale_price=data['partner_sale_price'],
-        estimate=estimate,
-        client=client_profile,  # None pour admin, client réel sinon
-        payment_timing=payment_timing,
-    )
-
-def create_booking(data):
-    """
-    Crée une réservation.
-    ✅ SOLUTION SIMPLE : Même logique
-    """
-    estimate = get_object_or_404(Estimate, id=data['estimate'])
-    user = get_object_or_404(CustomUser, id=data['client'])
-    
-    # ✅ SOLUTION SIMPLE : Si admin, pas de client
+    # Si admin, pas de client
     if user.user_type == 'administrator':
         client_profile = None
     else:
@@ -1028,19 +1062,37 @@ def create_booking(data):
         driver_sale_price=data['driver_sale_price'],
         partner_sale_price=data['partner_sale_price'],
         estimate=estimate,
-        client=client_profile,  # None pour admin, client réel sinon
+        client=client_profile,
+        payment_timing=payment_timing,
+    )
+
+def create_booking(data):
+    """Crée une réservation avec support admin"""
+    estimate = get_object_or_404(Estimate, id=data['estimate'])
+    user = get_object_or_404(CustomUser, id=data['client'])
+    
+    # Si admin, pas de client
+    if user.user_type == 'administrator':
+        client_profile = None
+    else:
+        client_profile = user.client
+    
+    return Booking.objects.create(
+        compensation=data['compensation'],
+        commission=data['commission'],
+        driver_sale_price=data['driver_sale_price'],
+        partner_sale_price=data['partner_sale_price'],
+        estimate=estimate,
+        client=client_profile,
     )
 
 def create_estimate(request_data):
-    """
-    Crée une estimation.
-    ✅ CORRECTION: MeetingPlace est maintenant optionnel
-    """
+    """Crée une estimation avec MeetingPlace optionnel"""
     from django.shortcuts import get_object_or_404
     from configurations.models import MeetingPlace
     from courses.models import EstimationLog, UserChoice, Estimate
     
-    # ✅ VALIDATIONS ROBUSTES
+    # Validations robustes
     try:
         estimation_log = get_object_or_404(EstimationLog, id=request_data.get('estimation_log'))
     except:
@@ -1051,10 +1103,10 @@ def create_estimate(request_data):
     except:
         raise ValueError(f"UserChoice avec l'ID {request_data.get('user_choice')} n'existe pas.")
     
-    # ✅ MEETING_PLACE OPTIONNEL
+    # MeetingPlace optionnel
     meeting_place = None
     meeting_place_id = request_data.get('meeting_place')
-    if meeting_place_id:  # Seulement si fourni
+    if meeting_place_id:
         try:
             meeting_place = get_object_or_404(MeetingPlace, id=meeting_place_id)
         except:
@@ -1063,7 +1115,7 @@ def create_estimate(request_data):
     estimate = Estimate.objects.create(
         estimation_log=estimation_log,
         user_choice=user_choice,
-        meeting_place=meeting_place,  # ✅ Peut être None
+        meeting_place=meeting_place,
         flight_number=request_data.get('flight_number'),
         message=request_data.get('message'),
         total_booking_cost=request_data.get('total_booking_cost'),
@@ -1092,11 +1144,7 @@ def create_estimate(request_data):
     return estimate.id
 
 def validate_client_id_and_get_passengers(client_id=None):
-    """
-    Valide l'ID du client et récupère les passagers associés.
-    Si client_id est None, récupère les passagers avec client null.
-    Retourne une liste de dictionnaires avec les données des passagers.
-    """
+    """Valide l'ID du client et récupère les passagers associés"""
     try:
         if client_id:
             # Vérifier si le client existe
@@ -1118,7 +1166,7 @@ def validate_client_id_and_get_passengers(client_id=None):
             }
             for passenger in passengers
         ]
-        # Retourner une liste vide avec un message si aucun passager n'est trouvé
+        
         if not passengers_data:
             return [], None
         return passengers_data, None
@@ -1126,17 +1174,7 @@ def validate_client_id_and_get_passengers(client_id=None):
         return [], {"client_id": f"Erreur lors de la récupération des passagers: {str(e)}"}
 
 def format_booking_validation_response(validated_data, formatted_data, estimate_id):
-    """
-    Formate la réponse de validation de booking selon la nouvelle structure organisée.
-    
-    Args:
-        validated_data: Données validées de la requête
-        formatted_data: Données formatées après traitement
-        estimate_id: ID de l'estimate créé
-    
-    Returns:
-        dict: Réponse formatée selon la nouvelle structure
-    """
+    """Formate la réponse de validation de booking selon la nouvelle structure organisée"""
     
     # 1. BOOKING INFO - Informations de base de la réservation
     booking_info = {
@@ -1207,10 +1245,10 @@ def format_booking_validation_response(validated_data, formatted_data, estimate_
             "total": attr['total']
         }
         for attr in attributes_data
-        if 'attribute_name' in attr  # Éviter les éléments de total
+        if 'attribute_name' in attr
     ]
     
-    # 7. PRICING - Tarification simplifiée (sans commission/compensation)
+    # 7. PRICING - Tarification simplifiée
     pricing = {
         "base_cost": formatted_data.get('selected_tariff', 0),
         "additional_services_cost": formatted_data.get('total_attributes_cost', 0),
@@ -1240,10 +1278,7 @@ def format_booking_validation_response(validated_data, formatted_data, estimate_
     }
 
 def get_payment_notes(payment_method, payment_timing):
-    """
-    Génère des notes de paiement selon la méthode et le timing
-    ✅ CORRECTION: Cette fonction peut être conservée pour les logs ou autres usages
-    """
+    """Génère des notes de paiement selon la méthode et le timing"""
     if not payment_method:
         return "Méthode de paiement non définie"
     
@@ -1264,9 +1299,7 @@ def get_payment_notes(payment_method, payment_timing):
         return f"{base_note} - Paiement immédiat demandé (en développement)"
 
 def get_payment_instructions(payment_method):
-    """
-    Retourne les instructions de paiement pour le client
-    """
+    """Retourne les instructions de paiement pour le client"""
     if not payment_method:
         return "Contactez notre service client pour les modalités de paiement."
     
@@ -1281,17 +1314,13 @@ def get_payment_instructions(payment_method):
     return instructions.get(payment_method.name, 
                           "Vous recevrez prochainement les instructions de paiement.")
 
-# ✅ FONCTIONS UTILITAIRES SUPPLÉMENTAIRES
+# Fonctions utilitaires supplémentaires
 def is_admin_booking(booking):
-    """
-    Détermine si une réservation a été créée par un admin
-    """
+    """Détermine si une réservation a été créée par un admin"""
     return booking.client is None
 
 def get_booking_creator_info(booking):
-    """
-    Retourne les infos sur qui a créé la réservation
-    """
+    """Retourne les infos sur qui a créé la réservation"""
     if booking.client is None:
         # Réservation admin
         admin_user = booking.estimate.estimation_log.user
@@ -1309,9 +1338,7 @@ def get_booking_creator_info(booking):
         }
 
 def get_admin_bookings(admin_user):
-    """
-    Récupère toutes les réservations créées par un admin
-    """
+    """Récupère toutes les réservations créées par un admin"""
     if admin_user.user_type != 'administrator':
         return Booking.objects.none()
     
@@ -1320,14 +1347,10 @@ def get_admin_bookings(admin_user):
         client__isnull=True,
         estimate__estimation_log__user=admin_user
     )
-    
-# ✅ NOUVELLES FONCTIONS À AJOUTER dans helpers.py
 
+# Nouvelles fonctions unifiées pour emails et PDF
 def get_unified_booking_context(booking_id, is_update=False):
-    """
-    ✅ FONCTION CENTRALE : Prépare toutes les données nécessaires pour emails et PDF
-    Utilisée pour création ET mise à jour
-    """
+    """Prépare toutes les données nécessaires pour emails et PDF"""
     booking = Booking.objects.get(id=booking_id)
     business_info = get_business_info()
     
@@ -1358,10 +1381,7 @@ def get_unified_booking_context(booking_id, is_update=False):
     return unified_context, booking
 
 def send_unified_emails(booking_id, is_update=False):
-    """
-    ✅ FONCTION OPTIMISÉE : Envoi unifié des emails selon le type de réservation
-    Gère création ET mise à jour avec les mêmes templates
-    """
+    """Envoi unifié des emails selon le type de réservation"""
     unified_context, booking = get_unified_booking_context(booking_id, is_update)
     
     # 1. Email MANAGER (toujours envoyé)
@@ -1376,9 +1396,7 @@ def send_unified_emails(booking_id, is_update=False):
         send_client_email(unified_context, booking)
 
 def send_manager_email(context):
-    """
-    Envoie l'email au manager avec le template unifié
-    """
+    """Envoie l'email au manager avec le template unifié"""
     try:
         business = Business.objects.filter(business_type="my_business").first()
         if not (business and business.main_user and business.main_user.role == "manager"):
@@ -1390,16 +1408,12 @@ def send_manager_email(context):
         html_content = render_to_string("fichiers_mails/email_booking_admin.html", context)
         send_email(manager_email, subject, html_content)
         
-        print(f"✅ Email manager envoyé à {manager_email}")
     except Exception as e:
-        print(f"❌ Erreur envoi email manager: {str(e)}")
+        print(f"Erreur envoi email manager: {str(e)}")
 
 def send_client_email(context, booking):
-    """
-    Envoie l'email au client avec le template unifié
-    """
+    """Envoie l'email au client avec le template unifié"""
     if not booking.client or not booking.client.email:
-        print("ℹ️ Réservation client : Pas d'email client")
         return
     
     try:
@@ -1418,14 +1432,11 @@ def send_client_email(context, booking):
         html_content = render_to_string("fichiers_mails/email_booking_client.html", client_context)
         send_email(client_email, subject, html_content)
         
-        print(f"✅ Email client envoyé à {client_email}")
     except Exception as e:
-        print(f"❌ Erreur envoi email client: {str(e)}")
+        print(f"Erreur envoi email client: {str(e)}")
 
 def send_passenger_emails(context, booking):
-    """
-    Envoie les emails aux passagers pour les réservations admin
-    """
+    """Envoie les emails aux passagers pour les réservations admin"""
     passengers = context['reservation_details'].get("passengers", [])
     emails_sent = 0
     
@@ -1451,20 +1462,15 @@ def send_passenger_emails(context, booking):
             html_content = render_to_string("fichiers_mails/email_booking_client.html", passenger_context)
             send_email(passenger_email, subject, html_content)
             emails_sent += 1
-            print(f"✅ Email passager envoyé à {passenger_email}")
             
         except Exception as e:
-            print(f"❌ Erreur lors de l'envoi de l'email à {passenger_email}: {str(e)}")
+            print(f"Erreur lors de l'envoi de l'email à {passenger_email}: {str(e)}")
     
     if emails_sent == 0:
-        print("ℹ️ Réservation admin : Aucun passager avec email")
-    else:
-        print(f"ℹ️ Réservation admin : {emails_sent} email(s) envoyé(s) aux passagers")
+        print("Réservation admin : Aucun passager avec email")
 
 def get_unified_pdf_context(booking_id):
-    """
-    ✅ FONCTION OPTIMISÉE : Prépare le contexte pour génération PDF
-    """
+    """Prépare le contexte pour génération PDF"""
     unified_context, booking = get_unified_booking_context(booking_id, is_update=False)
     
     # Ajouter le contenu statique pour PDF
@@ -1477,9 +1483,7 @@ def get_unified_pdf_context(booking_id):
     return pdf_context
 
 def update_existing_estimate(estimate, validated_data, formatted_data):
-    """
-    Met à jour un estimate existant avec les nouvelles données
-    """
+    """Met à jour un estimate existant avec les nouvelles données"""
     from django.db import transaction
     
     with transaction.atomic():
@@ -1553,3 +1557,229 @@ def update_existing_estimate(estimate, validated_data, formatted_data):
         estimate.save()
         
     return estimate.id
+
+# Fonctions de gestion des paiements
+def validate_payment_request_data(request_data):
+    """Valide les données de requête de paiement"""
+    serializer = PaymentSerializer(data=request_data)
+    if not serializer.is_valid():
+        raise ValueError(f"Erreurs de validation: {serializer.errors}")
+    return serializer.validated_data
+
+def validate_estimate_for_payment(estimate_id):
+    """Valide l'existence de l'estimate pour le paiement"""
+    estimate = Estimate.objects.filter(id=estimate_id).first()
+    if not estimate:
+        raise ValueError(f"Estimation avec l'ID {estimate_id} non trouvée.")
+    return estimate
+
+def get_payment_estimation_tariff(estimate):
+    """Récupère l'EstimationTariff pour les calculs de paiement"""
+    estimation_tariff = EstimationTariff.objects.filter(
+        estimation_log_id=estimate.estimation_log_id,
+        vehicle_id=estimate.user_choice.vehicle_id
+    ).first()
+    
+    if not estimation_tariff:
+        raise ValueError("Aucun tarif trouvé pour cette estimation et ce véhicule.")
+    return estimation_tariff
+
+def get_payment_client_info(estimate):
+    """Récupère les informations client pour les calculs de paiement avec support admin"""
+    client_id = None
+    client_for_promo = None
+    
+    # Essayer de récupérer le client depuis l'estimate
+    if hasattr(estimate, 'client') and estimate.client:
+        client_id = estimate.client.id
+        client_for_promo = estimate.client
+    # Sinon, essayer depuis l'estimation_log
+    elif hasattr(estimate, 'estimation_log') and estimate.estimation_log and estimate.estimation_log.user:
+        user = estimate.estimation_log.user
+        client_id = user.id
+        
+        # Admin peut bénéficier des codes publics
+        if user.user_type == 'administrator':
+            # Pour admin: client_for_promo = None (codes publics OK, spécifiques NON)
+            client_for_promo = None
+        else:
+            # Pour client: essayer de récupérer le profil client
+            try:
+                client_for_promo = user.client
+            except:
+                client_for_promo = None
+    
+    return client_id, client_for_promo
+
+def prepare_payment_user_choice_data(estimate, estimation_tariff):
+    """Prépare les données user_choice pour les calculs de paiement"""
+    return {
+        'vehicle_id': estimate.user_choice.vehicle_id,
+        'selected_tariff': estimate.user_choice.selected_tariff.id if estimate.user_choice.selected_tariff else None,
+        'is_standard_cost': estimate.user_choice.is_standard_cost,
+        'standard_cost': float(estimation_tariff.standard_cost) if estimate.user_choice.is_standard_cost else None
+    }
+
+def calculate_payment_costs_for_estimate(estimate, estimation_tariff, validated_data, client_for_promo):
+    """Calcule les coûts de paiement pour une estimation"""
+    user_choice = prepare_payment_user_choice_data(estimate, estimation_tariff)
+    total_attributes_cost = float(sum(attr.total for attr in estimate.estimate_attribute.all()))
+    
+    # Validation et application du code promo
+    code_promo = validated_data.get('code_promo')
+    promo_code_info = None
+    
+    if code_promo:
+        promo_code_info = validate_and_apply_promo_code_new(code_promo, client_for_promo, estimation_tariff)
+    
+    # Calcul des coûts avec la nouvelle logique
+    cost_result = calculate_booking_costs_new(
+        user_choice=user_choice,
+        estimation_tariff=estimation_tariff,
+        client=client_for_promo,
+        total_attributes_cost=total_attributes_cost,
+        promo_code_info=promo_code_info,
+        compensation=validated_data.get('compensation', 0),
+        commission=validated_data.get('commission', 0)
+    )
+    
+    return cost_result
+
+def update_estimate_payment_information(estimate, validated_data, cost_result):
+    """Met à jour les informations de paiement de l'estimate"""
+    payment_timing = validated_data.get('payment_timing', 'later')
+    compensation = validated_data.get('compensation', 0)
+    commission = validated_data.get('commission', 0)
+    
+    # Mise à jour des champs de base
+    estimate.payment_method_id = validated_data['payment_method']
+    estimate.total_booking_cost = cost_result['total_booking_cost']
+    
+    # Gestion compensation/commission
+    if compensation > 0:
+        estimate.compensation = compensation
+        estimate.commission = 0
+    elif commission > 0:
+        estimate.commission = commission
+        estimate.compensation = 0
+    
+    # Gestion du payment_timing (toujours True en V1)
+    estimate.is_payment_pending = True
+    
+    estimate.save()
+    return payment_timing
+
+def generate_payment_response_data(estimate_id, client_id, cost_result, validated_data, payment_timing):
+    """Génère la réponse de paiement standardisée"""
+    total_attributes_cost = cost_result.get('total_attributes_cost', 0)
+    compensation = validated_data.get('compensation', 0)
+    commission = validated_data.get('commission', 0)
+    
+    # Messages selon le timing
+    if payment_timing == 'later':
+        message = "Booking validated, payment will be processed later"
+        payment_status_info = "Payment scheduled for later processing"
+    else:
+        message = "Payment timing set to 'now' - processed as 'later' in current version"
+        payment_status_info = "Immediate payment requested (feature in development)"
+    
+    response_data = {
+        "estimate_id": estimate_id,
+        "client_id": client_id,
+        "base_cost": cost_result['selected_tariff'],
+        "additional_services_cost": total_attributes_cost,
+        "total_booking_cost": cost_result['total_booking_cost'],
+        "promotion_message": cost_result.get('promotion_message'),
+        "driver_sale_price": cost_result['driver_sale_price'],
+        "partner_sale_price": cost_result['partner_sale_price'],
+        "commission_applied": commission,
+        "compensation_applied": compensation,
+        "payment_method": validated_data['payment_method'],
+        "payment_timing": payment_timing,
+        "payment_status_info": payment_status_info,
+        "ready_for_booking": True
+    }
+    
+    return response_data, message
+
+def check_payment_creation_constraints(estimate):
+    """Vérifie les contraintes pour la création d'un paiement"""
+    if estimate.payment_method:
+        return {
+            "status": "warning",
+            "message": "Le paiement a déjà été configuré pour cette estimation. Utilisez mode='update' pour modifier.",
+            "data": {"current_payment_method": estimate.payment_method.id},
+            "http_status": status.HTTP_400_BAD_REQUEST
+        }
+    return None
+
+def check_payment_update_constraints(estimate):
+    """Vérifie les contraintes pour la modification d'un paiement"""
+    if not estimate.payment_method:
+        return {
+            "status": "error",
+            "message": "Aucun paiement configuré pour cette estimation. Utilisez le mode de création normal.",
+            "http_status": status.HTTP_400_BAD_REQUEST
+        }
+    return None
+
+def process_payment_operation(estimate, validated_data, is_update=False):
+    """Traite une opération de paiement"""
+    try:
+        # 1. Récupération des données nécessaires
+        estimation_tariff = get_payment_estimation_tariff(estimate)
+        client_id, client_for_promo = get_payment_client_info(estimate)
+        
+        # 2. Calcul des coûts
+        cost_result = calculate_payment_costs_for_estimate(
+            estimate, estimation_tariff, validated_data, client_for_promo
+        )
+        
+        # 3. Mise à jour de l'estimate
+        payment_timing = update_estimate_payment_information(estimate, validated_data, cost_result)
+        
+        # 4. Génération de la réponse
+        response_data, base_message = generate_payment_response_data(
+            estimate.id, client_id, cost_result, validated_data, payment_timing
+        )
+        
+        # 5. Message personnalisé selon le mode
+        if is_update:
+            message = f"Informations de paiement mises à jour avec succès. {base_message}"
+        else:
+            message = base_message
+        
+        return {
+            "status": "success",
+            "message": message,
+            "data": response_data,
+            "http_status": status.HTTP_200_OK
+        }
+        
+    except Exception as e:
+        error_message = f"Erreur lors du {'traitement' if not is_update else 'mise à jour'} du paiement: {str(e)}"
+        return {
+            "status": "error",
+            "message": error_message,
+            "http_status": status.HTTP_500_INTERNAL_SERVER_ERROR
+        }
+
+def handle_payment_creation_logic(estimate, validated_data):
+    """Gère la logique de création de paiement"""
+    # Vérification des contraintes de création
+    constraint_error = check_payment_creation_constraints(estimate)
+    if constraint_error:
+        return constraint_error
+    
+    # Traitement de la création
+    return process_payment_operation(estimate, validated_data, is_update=False)
+
+def handle_payment_update_logic(estimate, validated_data):
+    """Gère la logique de modification de paiement"""
+    # Vérification des contraintes de modification
+    constraint_error = check_payment_update_constraints(estimate)
+    if constraint_error:
+        return constraint_error
+    
+    # Traitement de la modification
+    return process_payment_operation(estimate, validated_data, is_update=True)
