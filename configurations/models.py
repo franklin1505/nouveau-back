@@ -585,6 +585,8 @@ class Notification(models.Model):
     TYPE_CHOICES = [
         ("expiration", "Expiration"),
         ("usage_limit", "Limite d'utilisation atteinte"),
+        ("booking_confirmation", "Confirmation de réservation"),
+        ("booking_update", "Mise à jour de réservation"), 
     ]
 
     title = models.CharField(max_length=255, help_text="Titre de la notification.")

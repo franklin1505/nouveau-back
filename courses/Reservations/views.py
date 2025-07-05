@@ -7,8 +7,8 @@ from courses.Reservations.helpers import (
     create_booking_with_payment_timing, create_response, format_booking_data, 
     format_booking_validation_response, get_booking_email_context_and_send_emails, 
     get_payment_instructions, get_payment_notes, handle_api_exceptions, 
-    handle_payment_creation_logic, handle_payment_update_logic, log_booking_action, 
-    process_booking_data, update_estimation_and_create_estimate, update_existing_estimate,
+    handle_payment_creation_logic, handle_payment_update_logic, 
+    process_booking_data, send_unified_emails_with_notifications, update_estimation_and_create_estimate, update_existing_estimate,
     validate_booking_data, update_estimation_tariff, calculate_booking_costs, 
     validate_client_id_and_get_passengers, validate_estimate_for_payment, 
     validate_payment_request_data
@@ -16,6 +16,7 @@ from courses.Reservations.helpers import (
 from courses.Reservations.pdf_service import generate_booking_pdf, get_booking_html
 from courses.Reservations.serializers import PassengerListSerializer, PaymentSerializer, UpdateTariffSerializer
 from courses.models import Booking, EstimationTariff, Estimate
+from utilisateurs.models import Administrator, Business
 
 class BookingValidateView(APIView):
     permission_classes = [IsAuthenticated]
@@ -222,60 +223,6 @@ class BookingPaymentView(APIView):
             http_status=result["http_status"]
         )
 
-class BookingCreateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @handle_api_exceptions
-    def post(self, request, *args, **kwargs):
-        data = request.data
-        required_fields = [
-            'compensation', 'commission', 'driver_sale_price',
-            'partner_sale_price', 'estimate', 'client'
-        ]
-        
-        for field in required_fields:
-            if field not in data:
-                return create_response(
-                    status_type="error",
-                    message=f"Le champ '{field}' est obligatoire.",
-                    http_status=status.HTTP_400_BAD_REQUEST
-                )
-
-        estimate = Estimate.objects.get(id=data['estimate'])
-        payment_timing = data.get('payment_timing', 'later')
-        
-        # Vérification de la méthode de paiement
-        if not estimate.payment_method:
-            return create_response(
-                status_type="error",
-                message="Une méthode de paiement doit être sélectionnée.",
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Création de la réservation avec support admin
-        booking = create_booking_with_payment_timing(data, payment_timing)
-        user_id = request.user.id if request.user.is_authenticated else None
-        log_booking_action(booking, user_id, "created")
-        
-        display_data = format_booking_data(booking=booking, include_request_data=False)
-        
-        # Ajout des informations de paiement à la réponse
-        display_data["display_data"]["payment_timing"] = payment_timing
-        display_data["display_data"]["payment_instructions"] = get_payment_instructions(estimate.payment_method)
-        
-        # Notes de paiement optionnelles
-        payment_notes = get_payment_notes(estimate.payment_method, payment_timing)
-        display_data["display_data"]["payment_notes"] = payment_notes
-        
-        get_booking_email_context_and_send_emails(booking.id, display_data["display_data"])
-
-        return create_response(
-            status_type="success",
-            message="Réservation créée avec succès. Paiement à effectuer ultérieurement.",
-            data=display_data["display_data"],
-            http_status=status.HTTP_201_CREATED
-        )
-
 class UpdateTariffView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -347,20 +294,6 @@ class DownloadBookingPDFView(APIView):
         """Génère et retourne le PDF de la réservation"""
         return generate_booking_pdf(booking_id)
     
-class DebugBookingHTMLView(APIView):
-    """Vue pour visualiser le HTML avant génération PDF (utile pour debugging)"""
-    permission_classes = [AllowAny]
-
-    def get(self, request, booking_id):
-        """Retourne le HTML généré pour vérification"""
-        html_string, error = get_booking_html(booking_id)
-        
-        if error:
-            return HttpResponse(f"Erreur: {error}", status=500)
-        
-        # Retourne le HTML directement dans le navigateur
-        return HttpResponse(html_string, content_type='text/html')
-
 class PassengerListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -396,4 +329,57 @@ class PassengerListView(APIView):
             message="Liste des passagers récupérée avec succès.",
             data={"passagers": serializer.data},
             http_status=status.HTTP_200_OK
+        )
+        
+class BookingCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @handle_api_exceptions
+    def post(self, request, *args, **kwargs):
+        data = request.data
+        required_fields = [
+            'compensation', 'commission', 'driver_sale_price',
+            'partner_sale_price', 'estimate', 'client'
+        ]
+        
+        for field in required_fields:
+            if field not in data:
+                return create_response(
+                    status_type="error",
+                    message=f"Le champ '{field}' est obligatoire.",
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+
+        estimate = Estimate.objects.get(id=data['estimate'])
+        payment_timing = data.get('payment_timing', 'later')
+        
+        if not estimate.payment_method:
+            return create_response(
+                status_type="error",
+                message="Une méthode de paiement doit être sélectionnée.",
+                http_status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        booking = create_booking_with_payment_timing(data, payment_timing)
+        user_id = request.user.id if request.user.is_authenticated else None
+        # log_booking_action(booking, user_id, "created")
+        
+        display_data = format_booking_data(booking=booking, include_request_data=False)
+        
+        display_data["display_data"]["payment_timing"] = payment_timing
+        display_data["display_data"]["payment_instructions"] = get_payment_instructions(estimate.payment_method)
+        
+        payment_notes = get_payment_notes(estimate.payment_method, payment_timing)
+        display_data["display_data"]["payment_notes"] = payment_notes
+        
+        try:
+            send_unified_emails_with_notifications(booking.id, is_update=False)
+        except Exception as e:
+            print(f"Erreur envoi emails/notifications: {e}")
+
+        return create_response(
+            status_type="success",
+            message="Réservation créée avec succès. Paiement à effectuer ultérieurement.",
+            data=display_data["display_data"],
+            http_status=status.HTTP_201_CREATED
         )

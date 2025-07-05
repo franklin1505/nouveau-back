@@ -457,13 +457,14 @@ class Booking(models.Model):
         (CANCELLATION_REQUESTED, "Cancellation Requested"),
         (CANCELLED, "Cancelled"),
     )
+    
     PAYMENT_TIMING_CHOICES = [
         (LATER, 'Deferred Payment'),  
         (NOW, 'Immediate Payment'),
     ]
     
-
     # Fields
+    is_archived = models.BooleanField(default=False, help_text="Indicates if the booking has been archived.")
     is_driver_paid = models.BooleanField(default=False, help_text="Indicates if the driver has been paid.")
     is_partner_paid = models.BooleanField(default=False, help_text="Indicates if the partner has been paid.")
     client = models.ForeignKey(
@@ -507,6 +508,12 @@ class Booking(models.Model):
         choices=CANCELLATION_STATUS_CHOICES,
         default=NOT_CANCELLED,
         help_text="Cancellation status of the booking."
+    )
+    status = models.CharField(
+        max_length=25,
+        choices=STATUS_CHOICES,
+        default=PENDING,
+        help_text="Status of the booking."
     )
     billing_status = models.CharField(
         max_length=25,

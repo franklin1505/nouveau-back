@@ -3,11 +3,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.test import APIRequestFactory
 from configurations.models import Attribute, PaymentMethod, Vehicle
+from configurations.notification_service import NotificationService
 from courses.models import Booking, BookingLog, Estimate, EstimateAttribute, EstimationLog, EstimationTariff, Passenger, UserChoice
 from parametrages.models import StaticContent, Urls
 from utilisateurs.Auth.views import LoginView, UserCreationView
 from utilisateurs.helpers import get_business_info, send_email
-from utilisateurs.models import Business, Client, CustomUser
+from utilisateurs.models import Administrator, Business, Client, CustomUser
 from django.db import transaction
 from courses.Reservations.serializers import ClientInfoSerializer, ClientResponseSerializer, EstimateAttributeResponseSerializer, EstimateAttributeSerializer, PassengerResponseSerializer, PassengerSerializer, PaymentSerializer, UserChoiceSerializer
 from django.utils import timezone
@@ -407,44 +408,21 @@ def update_estimation_and_create_estimate(estimation_log_id, user_id, is_code_pr
 
     return create_estimate(request_data)
 
-def log_booking_action(booking, user_id, action, custom_message=None):
-    """Enregistre une action dans les logs de réservation"""
-    user = get_object_or_404(CustomUser, id=user_id) if user_id else None
-    predefined_messages = {
-        "created": "La réservation a été créée avec succès.",
-        "updated": "Les détails de la réservation ont été mis à jour.",
-        "cancelled": "La réservation a été annulée.",
-        "assigned_to_driver": f"La réservation a été assignée au chauffeur {user.get_full_name() if user else 'Utilisateur inconnu'}.",
-        "assigned_to_partner": f"La réservation a été assignée au partenaire {user.get_full_name() if user else 'Utilisateur inconnu'}.",
-        "invoice_generated": "La facture pour la réservation a été générée.",
-        "payment_received": "Le paiement pour la réservation a été reçu.",
-        "status_changed": f"Le statut de la réservation a été changé à '{action}'."
-    }
-    message = custom_message or predefined_messages.get(action, action)
-    return BookingLog.objects.create(booking=booking, user=user, action=message)
-
-def get_business_info_for_pdf():
-    """Récupère les informations de l'entreprise pour les PDF"""
-    default_business_info = {
-        "name": "Votre Entreprise",
-        "email": "support@votreentreprise.com",
-        "phone_number": "+1234567890",
-        "address": "123 Rue de l'Entreprise, Ville, Pays",
-        "logo_url": None,
-        "operator_url": "http://127.0.0.1:8000",
-    }
-    business = Business.objects.filter(business_type="my_business").first()
-    operator_url = Urls.objects.first()
-    business_info = {
-        "name": business.name if business else default_business_info["name"],
-        "email": business.email if business else default_business_info["email"],
-        "phone_number": business.phone_number if business else default_business_info["phone_number"],
-        "address": business.address if business else default_business_info["address"],
-        "operator_url": operator_url.operator_url if operator_url else default_business_info["operator_url"],
-    }
-    if business and business.logo:
-        business_info["logo_url"] = urljoin(settings.BASE_URL, business.logo.url)
-    return business_info
+# def log_booking_action(booking, user_id, action, custom_message=None):
+#     """Enregistre une action dans les logs de réservation"""
+#     user = get_object_or_404(CustomUser, id=user_id) if user_id else None
+#     predefined_messages = {
+#         "created": "La réservation a été créée avec succès.",
+#         "updated": "Les détails de la réservation ont été mis à jour.",
+#         "cancelled": "La réservation a été annulée.",
+#         "assigned_to_driver": f"La réservation a été assignée au chauffeur {user.get_full_name() if user else 'Utilisateur inconnu'}.",
+#         "assigned_to_partner": f"La réservation a été assignée au partenaire {user.get_full_name() if user else 'Utilisateur inconnu'}.",
+#         "invoice_generated": "La facture pour la réservation a été générée.",
+#         "payment_received": "Le paiement pour la réservation a été reçu.",
+#         "status_changed": f"Le statut de la réservation a été changé à '{action}'."
+#     }
+#     message = custom_message or predefined_messages.get(action, action)
+#     return BookingLog.objects.create(booking=booking, user=user, action=message)
 
 def get_selected_tariff(user_choice, estimation_tariff):
     """Retourne le tarif sélectionné"""
@@ -1380,37 +1358,6 @@ def get_unified_booking_context(booking_id, is_update=False):
     
     return unified_context, booking
 
-def send_unified_emails(booking_id, is_update=False):
-    """Envoi unifié des emails selon le type de réservation"""
-    unified_context, booking = get_unified_booking_context(booking_id, is_update)
-    
-    # 1. Email MANAGER (toujours envoyé)
-    send_manager_email(unified_context)
-    
-    # 2. Emails CLIENT/PASSAGERS selon le type de réservation
-    if booking.client is None:
-        # Réservation ADMIN → Emails aux passagers
-        send_passenger_emails(unified_context, booking)
-    else:
-        # Réservation CLIENT → Email au client
-        send_client_email(unified_context, booking)
-
-def send_manager_email(context):
-    """Envoie l'email au manager avec le template unifié"""
-    try:
-        business = Business.objects.filter(business_type="my_business").first()
-        if not (business and business.main_user and business.main_user.role == "manager"):
-            raise Exception("Aucun manager trouvé pour cette entreprise.")
-        
-        manager_email = business.main_user.email
-        subject = f"{'Mise à jour' if context['is_update'] else 'Nouvelle'} réservation - {context['reservation_details']['booking_number']}"
-        
-        html_content = render_to_string("fichiers_mails/email_booking_admin.html", context)
-        send_email(manager_email, subject, html_content)
-        
-    except Exception as e:
-        print(f"Erreur envoi email manager: {str(e)}")
-
 def send_client_email(context, booking):
     """Envoie l'email au client avec le template unifié"""
     if not booking.client or not booking.client.email:
@@ -1429,7 +1376,7 @@ def send_client_email(context, booking):
         
         subject = f"{'Mise à jour de votre' if context['is_update'] else 'Confirmation de'} réservation - {context['reservation_details']['booking_number']}"
         
-        html_content = render_to_string("fichiers_mails/email_booking_client.html", client_context)
+        html_content = render_to_string("fichiers_mails/email_booking_booked_client.html", client_context)
         send_email(client_email, subject, html_content)
         
     except Exception as e:
@@ -1459,7 +1406,7 @@ def send_passenger_emails(context, booking):
             else:
                 subject = f"{'Mise à jour -' if context['is_update'] else ''} Vous êtes inscrit comme passager - {context['reservation_details']['booking_number']}"
             
-            html_content = render_to_string("fichiers_mails/email_booking_client.html", passenger_context)
+            html_content = render_to_string("fichiers_mails/email_booking_booked_client.html", passenger_context)
             send_email(passenger_email, subject, html_content)
             emails_sent += 1
             
@@ -1783,3 +1730,187 @@ def handle_payment_update_logic(estimate, validated_data):
     
     # Traitement de la modification
     return process_payment_operation(estimate, validated_data, is_update=True)
+
+def send_manager_email(context):
+    """Envoie l'email au manager avec le template unifié"""
+    try:
+        business = Business.objects.filter(business_type="my_business").first()
+        manager_email = None
+        
+        if business:
+            if business.main_user:
+                if business.main_user.role == "manager" and business.main_user.email:
+                    manager_email = business.main_user.email
+                elif business.main_user.email:
+                    manager_email = business.main_user.email
+            
+            if not manager_email and business.email:
+                manager_email = business.email
+        
+        if not manager_email:
+            manager_admin = Administrator.objects.filter(
+                role="manager", 
+                email__isnull=False
+            ).exclude(email='').first()
+            
+            if manager_admin:
+                manager_email = manager_admin.email
+        
+        if not manager_email:
+            any_admin = Administrator.objects.filter(
+                email__isnull=False
+            ).exclude(email='').first()
+            
+            if any_admin:
+                manager_email = any_admin.email
+        
+        if not manager_email:
+            return
+        
+        subject = f"{'Mise à jour' if context['is_update'] else 'Nouvelle'} réservation - {context['reservation_details']['booking_number']}"
+        html_content = render_to_string("fichiers_mails/email_booking_booked_admin.html", context)
+        send_email(manager_email, subject, html_content)
+            
+    except Exception as e:
+        raise e
+
+def send_unified_emails(booking_id, is_update=False):
+    """Envoi unifié des emails selon le type de réservation"""
+    try:
+        unified_context, booking = get_unified_booking_context(booking_id, is_update)
+        
+        try:
+            send_manager_email(unified_context)
+        except Exception as manager_error:
+            pass  # Ne pas faire échouer tout le processus
+        
+        if booking.client is None:
+            try:
+                send_passenger_emails(unified_context, booking)
+            except Exception as passenger_error:
+                pass
+        else:
+            try:
+                send_client_email(unified_context, booking)
+            except Exception as client_error:
+                pass
+        
+    except Exception as e:
+        raise e
+
+def send_client_email(context, booking):
+    """Envoie l'email au client avec le template unifié"""
+    try:
+        if not booking.client or not booking.client.email:
+            return
+    
+        client_email = booking.client.email
+        client_name = booking.client.get_full_name()
+        
+        client_context = {
+            **context,
+            "recipient_name": client_name,
+            "recipient_role": "client",
+        }
+        
+        subject = f"{'Mise à jour de votre' if context['is_update'] else 'Confirmation de'} réservation - {context['reservation_details']['booking_number']}"
+        
+        html_content = render_to_string("fichiers_mails/email_booking_booked_client.html", client_context)
+        send_email(client_email, subject, html_content)
+        
+    except Exception as e:
+        raise e
+
+def send_passenger_emails(context, booking):
+    """Envoie les emails aux passagers pour les réservations admin"""
+    try:
+        passengers = context['reservation_details'].get("passengers", [])
+        
+        for passenger in passengers:
+            passenger_email = passenger.get("email")
+            if not passenger_email or passenger_email == "Non renseigné":
+                continue
+                
+            try:
+                passenger_context = {
+                    **context,
+                    "recipient_name": passenger["name"],
+                    "recipient_role": "passenger",
+                    "recipient_is_main": passenger.get("is_main_client", False),
+                }
+                
+                if passenger.get("is_main_client"):
+                    subject = f"{'Mise à jour de votre' if context['is_update'] else 'Confirmation de'} réservation - {context['reservation_details']['booking_number']}"
+                else:
+                    subject = f"{'Mise à jour -' if context['is_update'] else ''} Vous êtes inscrit comme passager - {context['reservation_details']['booking_number']}"
+                
+                html_content = render_to_string("fichiers_mails/email_booking_booked_client.html", passenger_context)
+                send_email(passenger_email, subject, html_content)
+                
+            except Exception as e:
+                continue  # Continuer avec les autres passagers
+            
+    except Exception as e:
+        raise e
+
+def get_business_info_for_pdf():
+    """Récupère les informations de l'entreprise pour les PDF"""
+    try:
+        default_business_info = {
+            "name": "Votre Entreprise",
+            "email": "support@votreentreprise.com",
+            "phone_number": "+1234567890",
+            "address": "123 Rue de l'Entreprise, Ville, Pays",
+            "logo_url": None,
+            "operator_url": "http://127.0.0.1:8000",
+        }
+        
+        business = Business.objects.filter(business_type="my_business").first()
+        operator_url = Urls.objects.first()
+        
+        business_info = {
+            "name": business.name if business else default_business_info["name"],
+            "email": business.email if business else default_business_info["email"],
+            "phone_number": business.phone_number if business else default_business_info["phone_number"],
+            "address": business.address if business else default_business_info["address"],
+            "operator_url": operator_url.operator_url if operator_url else default_business_info["operator_url"],
+        }
+        
+        if business and business.logo:
+            business_info["logo_url"] = urljoin(settings.BASE_URL, business.logo.url)
+        
+        return business_info
+        
+    except Exception as e:
+        return default_business_info
+    
+def send_unified_emails_with_notifications(booking_id, is_update=False):
+    """
+    Version simplifiée : emails puis notifications
+    """
+    try:
+        # 1. Envoi des emails (logique existante)
+        send_unified_emails(booking_id, is_update)
+        
+        # 2. Envoi des notifications (nouvelle logique)
+        send_booking_notifications(booking_id, is_update)
+        
+    except Exception as e:
+        print(f"Erreur envoi emails: {e}")
+        # Essayer quand même les notifications
+        try:
+            send_booking_notifications(booking_id, is_update)
+        except Exception as notif_error:
+            print(f"Erreur notifications: {notif_error}")
+
+def send_booking_notifications(booking_id, is_update=False):
+    """
+    Point d'entrée unique pour les notifications
+    """
+    try:        
+        booking = Booking.objects.get(id=booking_id)
+        NotificationService.create_booking_notification(booking, is_update)
+        
+    except Exception as e:
+        print(f"Erreur notifications booking: {e}")
+
