@@ -57,17 +57,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    #'DEFAULT_PERMISSION_CLASSES': [
-    #    'rest_framework.permissions.AllowAny',  # Tout le monde peut accéder temporairement
-    #],
-    
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
-
-    #'DEFAULT_PERMISSION_CLASSES': (
-    #    'rest_framework.permissions.IsAuthenticated',  # Accès par défaut uniquement aux utilisateurs authentifiés
-    #),
 }
 
 SIMPLE_JWT = {

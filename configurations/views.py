@@ -12,8 +12,8 @@ class ArchivedNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        # Récupérer toutes les notifications archivées
-        notifications = Notification.objects.filter(status="archived").order_by('-created_at')
+        # Récupérer uniquement les notifications archivées de l'utilisateur connecté
+        notifications = Notification.objects.filter(user=request.user, status="archived").order_by('-created_at')
         serializer = NotificationSerializer(notifications, many=True)
         
         return create_response(
@@ -32,7 +32,8 @@ class UnreadNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        notifications = Notification.objects.filter(status="unread").order_by('-created_at')
+        # Récupérer uniquement les notifications non lues de l'utilisateur connecté
+        notifications = Notification.objects.filter(user=request.user, status="unread").order_by('-created_at')
         serializer = NotificationSerializer(notifications, many=True)
         
         return create_response(
@@ -43,6 +44,7 @@ class UnreadNotificationsView(APIView):
                 "results": serializer.data
             }
         )
+
 class NotificationArchiveView(APIView):
     """
     Vue pour archiver une ou plusieurs notifications.
@@ -58,8 +60,8 @@ class NotificationArchiveView(APIView):
                 http_status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Filtrer les notifications valides à archiver
-        notifications = Notification.objects.filter(id__in=notification_ids, status="unread")
+        # Filtrer les notifications valides à archiver de l'utilisateur connecté
+        notifications = Notification.objects.filter(id__in=notification_ids, user=request.user, status="unread")
         if not notifications.exists():
             return create_response(
                 status_type="error",

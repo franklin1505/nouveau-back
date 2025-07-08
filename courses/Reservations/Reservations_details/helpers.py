@@ -1,6 +1,7 @@
 from rest_framework.response import Response
 from rest_framework import status
 
+from courses.Logs.services import BookingChangeTracker
 from courses.Reservations.helpers import create_response
 
 def get_query_params(request):
@@ -132,3 +133,64 @@ def validate_booking_detail_request(booking_id):
         )
     
     return True, None
+
+def log_booking_changes_manual(booking, old_state, user, action_context=""):
+    """
+    Fonction helper pour logger manuellement les changements de booking
+    Utilisable dans n'importe quelle vue ou service
+    
+    Args:
+        booking: Instance de Booking après modification
+        old_state: État capturé avant modification
+        user: Utilisateur qui fait la modification
+        action_context: Contexte supplémentaire (optionnel)
+    """
+    BookingChangeTracker.detect_and_log_changes(booking, old_state, user)
+
+def capture_booking_state_helper(booking):
+    """
+    Helper pour capturer l'état d'un booking
+    Wrapper simple pour une utilisation facile
+    """
+    return BookingChangeTracker.capture_booking_state(booking)
+
+def with_booking_logging(booking_id, user):
+    """
+    Context manager pour logging automatique
+    
+    Usage:
+        with with_booking_logging(booking_id, request.user) as tracker:
+            # Faire des modifications
+            pass
+        # Le logging se fait automatiquement à la sortie du context
+    """
+    class BookingLoggingContext:
+        def __init__(self, booking_id, user):
+            self.booking_id = booking_id
+            self.user = user
+            self.old_state = None
+            
+        def __enter__(self):
+            try:
+                from courses.models import Booking
+                booking = Booking.objects.get(pk=self.booking_id)
+                self.old_state = BookingChangeTracker.capture_booking_state(booking)
+                return self
+            except:
+                return self
+                
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.old_state:
+                try:
+                    from courses.models import Booking
+                    booking = Booking.objects.get(pk=self.booking_id)
+                    booking.refresh_from_db()
+                    BookingChangeTracker.detect_and_log_changes(
+                        booking, 
+                        self.old_state, 
+                        self.user
+                    )
+                except:
+                    pass
+    
+    return BookingLoggingContext(booking_id, user)

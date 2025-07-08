@@ -3,49 +3,25 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.http import Http404
 
-from courses.Reservations.helpers import handle_api_exceptions, create_response
+from courses.Reservations.helpers import create_response, handle_api_exceptions
 from courses.models import Booking
 from .services import BookingStatsService
-from .serializers import (
-    GlobalBookingStatisticsSerializer, 
-    BookingCompleteSerializer,
-    BookingBasicSerializer,
-    BookingUpdateSerializer
-)
+from .serializers import GlobalBookingStatisticsSerializer, BookingCompleteSerializer, BookingUpdateSerializer
 from .pagination import BookingPagination
-from .helpers import (
-    extract_booking_filters,
-    extract_scope_and_search_key,
-    build_empty_detail_response,
-    build_global_stats_response,
-    build_detail_response,
-    build_update_response,
-    validate_detail_request,
-    validate_booking_detail_request
-)
+from .helpers import extract_booking_filters, extract_scope_and_search_key, build_empty_detail_response, build_global_stats_response, build_detail_response, validate_detail_request, validate_booking_detail_request
 
 class GlobalBookingStatisticsView(APIView):
-    """View to get global booking statistics with status workflow"""
     permission_classes = [IsAuthenticated]
     
     @handle_api_exceptions
     def get(self, request):
         params = extract_scope_and_search_key(request)
-        scope = params['scope']
-        
         main_stats = BookingStatsService.get_main_stats()
-        status_workflow = BookingStatsService.get_status_workflow_stats(scope)
-        
-        statistics_data = {
-            'main_stats': main_stats,
-            'status_workflow': status_workflow
-        }
-        
-        serializer = GlobalBookingStatisticsSerializer(statistics_data)
+        status_workflow = BookingStatsService.get_status_workflow_stats(params['scope'])
+        serializer = GlobalBookingStatisticsSerializer({'main_stats': main_stats, 'status_workflow': status_workflow})
         return build_global_stats_response(main_stats, serializer.data)
 
 class BookingStatisticsDetailView(APIView):
-    """View to get detailed booking statistics with filtering and pagination"""
     permission_classes = [IsAuthenticated]
     pagination_class = BookingPagination
     
@@ -55,33 +31,22 @@ class BookingStatisticsDetailView(APIView):
         if not is_valid:
             return error_response
         
-        scope = params['scope']
-        search_key = params['search_key']
-        filters = extract_booking_filters(request)
-        
         queryset = BookingStatsService.filter_bookings(
-            scope=scope,
-            search_key=search_key,
-            **filters
+            scope=params['scope'],
+            search_key=params['search_key'],
+            **extract_booking_filters(request)
         )
         
         if not queryset.exists():
             return build_empty_detail_response(Booking)
         
-        return self._build_paginated_response(request, queryset)
-    
-    def _build_paginated_response(self, request, queryset):
-        """Build paginated response with sub-stats"""
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request)
-        
         sub_stats = BookingStatsService.get_sub_stats(queryset)
         serializer = BookingCompleteSerializer(page, many=True)
-        
         return paginator.get_paginated_response(serializer.data, sub_stats)
 
 class BookingDetailView(APIView):
-    """View to get single booking detail by ID"""
     permission_classes = [IsAuthenticated]
     
     @handle_api_exceptions
@@ -102,32 +67,24 @@ class BookingDetailView(APIView):
             )
 
 class BookingUpdateView(APIView):
-    """View to update booking and related models"""
     permission_classes = [IsAuthenticated]
     
     @handle_api_exceptions
     def put(self, request, booking_id):
-        """Full update of booking"""
         return self._update_booking(request, booking_id, partial=False)
     
     @handle_api_exceptions
     def patch(self, request, booking_id):
-        """Partial update of booking"""
         return self._update_booking(request, booking_id, partial=True)
     
     def _update_booking(self, request, booking_id, partial=True):
-        """Common update logic for PUT and PATCH"""
         is_valid, error_response = validate_booking_detail_request(booking_id)
         if not is_valid:
             return error_response
         
         try:
             booking = BookingStatsService.get_booking_by_id(booking_id)
-            serializer = BookingUpdateSerializer(
-                booking, 
-                data=request.data, 
-                partial=partial
-            )
+            serializer = BookingUpdateSerializer(booking, data=request.data, partial=partial, context={'request': request})
             
             if serializer.is_valid():
                 updated_booking = serializer.save()
