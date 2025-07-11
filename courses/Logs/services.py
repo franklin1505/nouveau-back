@@ -290,6 +290,12 @@ class BookingChangeTracker:
 
     @staticmethod
     def detect_and_log_changes(booking, old_state, user):
+        # ✅ VÉRIFIER LE FLAG POUR ÉVITER LE LOG AUTOMATIQUE
+        if hasattr(booking, '_skip_change_tracking') and booking._skip_change_tracking:
+            # Nettoyer le flag après utilisation
+            delattr(booking, '_skip_change_tracking')
+            return  # 🚫 SKIP LE TRACKING AUTOMATIQUE
+        
         new_state = BookingChangeTracker.capture_booking_state(booking)
         changes = []
         if 'booking' in old_state and 'booking' in new_state:

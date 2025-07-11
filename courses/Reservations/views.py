@@ -331,40 +331,164 @@ class PassengerListView(APIView):
             http_status=status.HTTP_200_OK
         )
         
+# class BookingCreateView(APIView):
+#     permission_classes = [IsAuthenticated]
+
+#     @handle_api_exceptions
+#     def post(self, request, *args, **kwargs):
+#         data = request.data
+#         required_fields = [
+#             'compensation', 'commission', 'driver_sale_price',
+#             'partner_sale_price', 'estimate', 'client'
+#         ]
+        
+#         for field in required_fields:
+#             if field not in data:
+#                 return create_response(
+#                     status_type="error",
+#                     message=f"Le champ '{field}' est obligatoire.",
+#                     http_status=status.HTTP_400_BAD_REQUEST
+#                 )
+
+#         estimate = Estimate.objects.get(id=data['estimate'])
+#         payment_timing = data.get('payment_timing', 'later')
+        
+#         if not estimate.payment_method:
+#             return create_response(
+#                 status_type="error",
+#                 message="Une méthode de paiement doit être sélectionnée.",
+#                 http_status=status.HTTP_400_BAD_REQUEST
+#             )
+        
+#         booking = create_booking_with_payment_timing(data, payment_timing)
+#         user_id = request.user.id if request.user.is_authenticated else None
+#         # log_booking_action(booking, user_id, "created")
+        
+#         display_data = format_booking_data(booking=booking, include_request_data=False)
+        
+#         display_data["display_data"]["payment_timing"] = payment_timing
+#         display_data["display_data"]["payment_instructions"] = get_payment_instructions(estimate.payment_method)
+        
+#         payment_notes = get_payment_notes(estimate.payment_method, payment_timing)
+#         display_data["display_data"]["payment_notes"] = payment_notes
+        
+#         try:
+#             send_unified_emails_with_notifications(booking.id, is_update=False)
+#         except Exception as e:
+#             print(f"Erreur envoi emails/notifications: {e}")
+
+#         return create_response(
+#             status_type="success",
+#             message="Réservation créée avec succès. Paiement à effectuer ultérieurement.",
+#             data=display_data["display_data"],
+#             http_status=status.HTTP_201_CREATED
+#         )
+
+# 1. VIEWS.PY - BookingCreateView complète avec debugging
 class BookingCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     @handle_api_exceptions
     def post(self, request, *args, **kwargs):
-        data = request.data
-        required_fields = [
-            'compensation', 'commission', 'driver_sale_price',
-            'partner_sale_price', 'estimate', 'client'
-        ]
+        print("="*80)
+        print("🔍 DEBUT DEBUG - BookingCreateView")
+        print("="*80)
         
+        # 🔍 1. VERIFIER LES DONNEES BRUTES
+        print(f"📨 request.data TYPE: {type(request.data)}")
+        print(f"📨 request.data CONTENT: {request.data}")
+        print(f"📨 request.data KEYS: {list(request.data.keys()) if hasattr(request.data, 'keys') else 'Pas de keys'}")
+        
+        # 🔍 2. VERIFIER CHAQUE CHAMP INDIVIDUELLEMENT
+        data = request.data
+        for key, value in data.items():
+            print(f"📋 {key}: {value} (type: {type(value)})")
+        
+        # 🔍 3. VERIFIER L'UTILISATEUR AUTHENTIFIE
+        print(f"👤 request.user: {request.user}")
+        print(f"👤 request.user.id: {request.user.id} (type: {type(request.user.id)})")
+        print(f"👤 request.user.is_authenticated: {request.user.is_authenticated}")
+        
+        # 🔍 4. VERIFIER LES CHAMPS SPECIFIQUES
+        required_fields = ['compensation', 'commission', 'driver_sale_price', 'partner_sale_price', 'estimate', 'client']
+        
+        print("\n📋 VERIFICATION DES CHAMPS REQUIS:")
+        for field in required_fields:
+            if field in data:
+                value = data[field]
+                print(f"   ✅ {field}: {value} (type: {type(value)})")
+                
+                # Verification speciale pour les IDs
+                if field in ['estimate', 'client']:
+                    print(f"      🔍 Tentative de conversion en int:")
+                    try:
+                        converted = int(value)
+                        print(f"      ✅ Conversion réussie: {converted}")
+                    except Exception as e:
+                        print(f"      ❌ ERREUR conversion: {str(e)}")
+            else:
+                print(f"   ❌ {field}: MANQUANT")
+        
+        print("="*50)
+        
+        # Validation des champs obligatoires
         for field in required_fields:
             if field not in data:
+                print(f"❌ ERREUR: Champ manquant {field}")
                 return create_response(
                     status_type="error",
                     message=f"Le champ '{field}' est obligatoire.",
                     http_status=status.HTTP_400_BAD_REQUEST
                 )
 
-        estimate = Estimate.objects.get(id=data['estimate'])
+        print("🔍 AVANT get_object_or_404 pour Estimate")
+        print(f"   estimate_id: {data['estimate']} (type: {type(data['estimate'])})")
+        
+        try:
+            estimate = Estimate.objects.get(id=data['estimate'])
+            print(f"✅ Estimate trouvé: {estimate}")
+        except Exception as e:
+            print(f"❌ ERREUR get Estimate: {str(e)}")
+            return create_response(
+                status_type="error",
+                message=f"Erreur récupération estimate: {str(e)}",
+                http_status=status.HTTP_400_BAD_REQUEST
+            )
+        
         payment_timing = data.get('payment_timing', 'later')
+        print(f"🔍 payment_timing: {payment_timing}")
         
         if not estimate.payment_method:
+            print("❌ ERREUR: Pas de méthode de paiement")
             return create_response(
                 status_type="error",
                 message="Une méthode de paiement doit être sélectionnée.",
                 http_status=status.HTTP_400_BAD_REQUEST
             )
         
-        booking = create_booking_with_payment_timing(data, payment_timing)
+        print("🔍 AVANT create_booking_with_payment_timing")
+        print(f"   data passé: {data}")
+        print(f"   payment_timing passé: {payment_timing}")
+        
+        try:
+            booking = create_booking_with_payment_timing(data, payment_timing)
+            print(f"✅ Booking créé avec succès: {booking}")
+        except Exception as e:
+            print(f"❌ ERREUR create_booking_with_payment_timing: {str(e)}")
+            return create_response(
+                status_type="error",
+                message=f"Erreur création booking: {str(e)}",
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
         user_id = request.user.id if request.user.is_authenticated else None
+        print(f"🔍 user_id pour log: {user_id} (type: {type(user_id)})")
+        
         # log_booking_action(booking, user_id, "created")
         
+        print("🔍 AVANT format_booking_data")
         display_data = format_booking_data(booking=booking, include_request_data=False)
+        print(f"✅ display_data généré")
         
         display_data["display_data"]["payment_timing"] = payment_timing
         display_data["display_data"]["payment_instructions"] = get_payment_instructions(estimate.payment_method)
@@ -373,9 +497,15 @@ class BookingCreateView(APIView):
         display_data["display_data"]["payment_notes"] = payment_notes
         
         try:
+            print("🔍 AVANT send_unified_emails_with_notifications")
             send_unified_emails_with_notifications(booking.id, is_update=False)
+            print("✅ Emails/notifications envoyés")
         except Exception as e:
-            print(f"Erreur envoi emails/notifications: {e}")
+            print(f"❌ Erreur envoi emails/notifications: {e}")
+
+        print("="*80)
+        print("🔍 FIN DEBUG - BookingCreateView - SUCCES")
+        print("="*80)
 
         return create_response(
             status_type="success",

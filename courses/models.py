@@ -1,6 +1,5 @@
 from django.db import models
 from datetime import datetime
-
 from utilisateurs.models import CustomUser
 
 class EstimateAttribute(models.Model):
@@ -149,7 +148,6 @@ class UserChoice(models.Model):
 
     def __str__(self):
         return f"UserChoice {self.id} for Vehicle {self.vehicle_id}"
-
 class Estimate(models.Model):
     """
     Model for travel estimates.
@@ -209,9 +207,466 @@ class Estimate(models.Model):
     number_of_passengers = models.PositiveIntegerField(null=True, blank=True, help_text="Number of passengers.")
     case_number = models.CharField(max_length=100, null=True, blank=True, help_text="booking case number.")
     is_payment_pending = models.BooleanField(default=False)
+
     def __str__(self):
-        return f"Estimate {self.id}: {self.departure_location} → {self.destination_location}"
+        # ✅ CORRECTION : Utiliser les données de estimation_log
+        if self.estimation_log:
+            departure = self.estimation_log.departure
+            destination = self.estimation_log.destination
+            return f"Estimate {self.id}: {departure} → {destination}"
+        else:
+            return f"Estimate {self.id}: Sans estimation_log"
+
+    # ✅ BONUS : Ajouter des propriétés pour faciliter l'accès aux données
+    @property
+    def departure_location(self):
+        """Retourne le lieu de départ depuis l'estimation_log"""
+        return self.estimation_log.departure if self.estimation_log else None
     
+    @property
+    def destination_location(self):
+        """Retourne le lieu de destination depuis l'estimation_log"""
+        return self.estimation_log.destination if self.estimation_log else None
+    
+    @property
+    def pickup_date(self):
+        """Retourne la date de prise en charge depuis l'estimation_log"""
+        return self.estimation_log.pickup_date if self.estimation_log else None
+
+class Booking(models.Model):
+    """
+    Model for managing bookings.
+    """
+
+    # Status Choices
+    PENDING = "pending"
+    IN_PROCESS = "in_process"
+    ASSIGNED_TO_DRIVER = "assigned_to_driver"
+    ASSIGNED_TO_PARTNER = "assigned_to_partner"
+    NOT_ASSIGNED = "not_assigned"
+    DRIVER_NOTIFIED = "driver_notified"
+    APPROACHING = "approaching"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+    BILLING_NOT_INVOICED = "not_invoiced"
+    BILLING_INVOICE_REQUESTED = "invoice_requested"
+    BILLING_INVOICED = "invoiced"
+
+    NOT_CANCELLED = "not_cancelled"
+    CANCELLATION_REQUESTED = "cancellation_requested"
+    CANCELLED = "cancelled"
+    LATER = "later"
+    NOW = "now"
+    ONE_WAY = "one_way"
+    ROUND_TRIP = "round_trip"
+    
+    STATUS_CHOICES = (
+        (PENDING, "Pending"),
+        (IN_PROCESS, "In Process"),
+        (ASSIGNED_TO_DRIVER, "Assigned to Driver"),
+        (ASSIGNED_TO_PARTNER, "Assigned to Partner"),
+        (NOT_ASSIGNED, "Not Assigned"),
+        (DRIVER_NOTIFIED, "Driver Notified"),
+        (APPROACHING, "Approaching"),
+        (IN_PROGRESS, "In Progress"),
+        (COMPLETED, "Completed"),
+    )
+    BOOKING_TYPE_CHOICES = [
+        (ONE_WAY, "Aller simple"),
+        (ROUND_TRIP, "Aller-retour"),
+    ]
+
+    BILLING_STATUS_CHOICES = (
+        (BILLING_NOT_INVOICED, "Not Invoiced"),
+        (BILLING_INVOICE_REQUESTED, "Invoice Requested"),
+        (BILLING_INVOICED, "Invoiced"),
+    )
+
+    CANCELLATION_STATUS_CHOICES = (
+        (NOT_CANCELLED, "Not Cancelled"),
+        (CANCELLATION_REQUESTED, "Cancellation Requested"),
+        (CANCELLED, "Cancelled"),
+    )
+    
+    PAYMENT_TIMING_CHOICES = [
+        (LATER, 'Deferred Payment'),  
+        (NOW, 'Immediate Payment'),
+    ]
+    
+    # Fields
+    is_archived = models.BooleanField(default=False, help_text="Indicates if the booking has been archived.")
+    is_driver_paid = models.BooleanField(default=False, help_text="Indicates if the driver has been paid.")
+    is_partner_paid = models.BooleanField(default=False, help_text="Indicates if the partner has been paid.")
+    client = models.ForeignKey(
+        "utilisateurs.Client",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="bookings",
+        help_text="Client associated with the booking."
+    )
+    assigned_partner = models.ForeignKey(
+        "utilisateurs.Partner",
+        related_name="partner_bookings",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Partner assigned to the booking."
+    )
+    assigned_driver = models.ForeignKey(
+        "utilisateurs.Driver",
+        related_name="driver_bookings",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        help_text="Driver assigned to the booking."
+    )
+
+    estimate = models.ForeignKey(
+        "Estimate",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bookings",
+        help_text="Estimate associated with the booking (NULL for round-trip bookings)."
+    )
+    driver_sale_price = models.FloatField(null=True, blank=True, help_text="Sale price for the driver")
+    partner_sale_price = models.FloatField(null=True, blank=True, help_text="Sale price for the partner.")
+    compensation = models.FloatField(null=True, blank=True, help_text="Compensation amount.")
+    commission = models.FloatField(null=True, blank=True, help_text="Commission amount.")
+    booking_number = models.CharField(max_length=255, null=True, unique=True, help_text="Unique booking number.")
+    cancellation_status = models.CharField(
+        max_length=25,
+        choices=CANCELLATION_STATUS_CHOICES,
+        default=NOT_CANCELLED,
+        help_text="Cancellation status of the booking."
+    )
+    booking_type = models.CharField(
+        max_length=20,
+        choices=BOOKING_TYPE_CHOICES,
+        default=ONE_WAY,
+        help_text="Type de réservation (simple ou aller-retour)"
+    )
+    is_billable_when_cancelled = models.BooleanField(
+        default=False,
+        help_text="Si True, ce segment reste facturable même s'il est annulé"
+    )
+    status = models.CharField(
+        max_length=25,
+        choices=STATUS_CHOICES,
+        default=PENDING,
+        help_text="Status of the booking."
+    )
+    billing_status = models.CharField(
+        max_length=25,
+        choices=BILLING_STATUS_CHOICES,
+        default=BILLING_NOT_INVOICED,
+        help_text="Billing status of the booking."
+    )
+    payment_timing = models.CharField(
+        max_length=10,
+        choices=PAYMENT_TIMING_CHOICES,
+        default=LATER,
+        help_text="Indique quand le paiement sera effectué"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, help_text="Date when the booking was created.")
+
+    def _get_relevant_segments_for_payment(self):
+        """Retourne les segments concernés par le paiement"""
+        from django.db.models import Q
+        return self.segments.filter(
+            Q(status='cancelled', is_billable_when_cancelled=True) |
+            ~Q(status='cancelled')
+        )
+
+    @property
+    def total_cost_calculated(self):
+        """Calcule le coût total selon le type de booking"""
+        if self.booking_type == 'one_way':
+            return self.estimate.total_booking_cost if self.estimate else 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.segment_cost or 0 for segment in relevant_segments)
+
+    @property
+    def total_attributes_cost_calculated(self):
+        """Calcule le coût total des attributs"""
+        if self.booking_type == 'one_way':
+            return self.estimate.total_attributes_cost if self.estimate else 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.estimate.total_attributes_cost or 0 for segment in relevant_segments)
+            
+    @property
+    def effective_estimate(self):
+        """Retourne l'estimate actif selon le type de booking"""
+        if self.booking_type == 'one_way':
+            return self.estimate
+        outbound = self.outbound_segment
+        return outbound.estimate if outbound else None
+    
+    @property
+    def effective_status(self):
+        """Calcule le statut global depuis les segments pour aller-retour"""
+        if self.booking_type == 'one_way':
+            return self.status
+        return self._calculate_round_trip_status()
+
+    @property
+    def effective_driver_sale_price(self):
+        """Calcule le prix de vente chauffeur total"""
+        if self.booking_type == 'one_way':
+            return self.driver_sale_price or 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.calculated_driver_price for segment in relevant_segments)
+
+    @property
+    def effective_partner_sale_price(self):
+        """Calcule le prix de vente partenaire total"""
+        if self.booking_type == 'one_way':
+            return self.partner_sale_price or 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.calculated_partner_price for segment in relevant_segments)
+    
+    @property
+    def effective_compensation(self):
+        """Calcule la compensation totale"""
+        if self.booking_type == 'one_way':
+            return self.compensation or 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.compensation or 0 for segment in relevant_segments)
+    
+    @property
+    def effective_commission(self):
+        """Calcule la commission totale"""
+        if self.booking_type == 'one_way':
+            return self.commission or 0
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return sum(segment.commission or 0 for segment in relevant_segments)
+
+    @property
+    def effective_is_driver_paid(self):
+        """Détermine si le chauffeur est effectivement payé"""
+        if self.booking_type == 'one_way':
+            return self.is_driver_paid
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return relevant_segments.exists() and all(s.is_driver_paid_segment for s in relevant_segments)
+
+    @property
+    def effective_is_partner_paid(self):
+        """Détermine si le partenaire est effectivement payé"""
+        if self.booking_type == 'one_way':
+            return self.is_partner_paid
+        relevant_segments = self._get_relevant_segments_for_payment()
+        return relevant_segments.exists() and all(s.is_partner_paid_segment for s in relevant_segments)
+    
+    def _calculate_round_trip_status(self):
+        """Calcule le statut global pour un aller-retour"""
+        segments = self.segments.all()
+        if not segments.exists():
+            return 'pending'
+        
+        statuses = [s.status for s in segments]
+        
+        if all(s == 'cancelled' for s in statuses):
+            return 'cancelled'
+        elif all(s in ['completed', 'cancelled'] for s in statuses):
+            return 'completed'
+        elif any(s in ['in_progress', 'approaching', 'driver_notified', 'assigned_to_driver', 'assigned_to_partner'] for s in statuses):
+            return 'in_progress'
+        else:
+            return 'pending'
+        
+    @property
+    def outbound_segment(self):
+        """Retourne le segment aller"""
+        return self.segments.filter(segment_type='outbound').first()
+    
+    @property
+    def return_segment(self):
+        """Retourne le segment retour"""
+        return self.segments.filter(segment_type='return').first()
+    
+    @property
+    def is_round_trip(self):
+        """Vérifie si c'est un aller-retour"""
+        return self.booking_type == 'round_trip'
+    
+    def __str__(self):
+        return f"Booking {self.booking_number or self.id}"
+
+    def clean_for_round_trip(self):
+        """Nettoie les champs globaux lors de la conversion en aller-retour"""
+        self.estimate = None
+        self.save(update_fields=['estimate'])
+        
+    def save(self, *args, **kwargs):
+        """Generate a booking number if it doesn't exist."""
+        if not self.booking_number:
+            self.booking_number = self.generate_booking_number()
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def generate_booking_number():
+        """Generate a sequential booking number using the last two digits of the current year."""
+        current_year_short = datetime.now().strftime("%y")
+        
+        pattern_prefix = f"BK-{current_year_short}-"
+        
+        valid_bookings = Booking.objects.filter(
+            booking_number__startswith=pattern_prefix,
+            booking_number__regex=r'^BK-\d{2}-\d{6}$'  
+        ).order_by('-id')
+        
+        if valid_bookings.exists():
+            last_booking = valid_bookings.first()
+            try:
+                # Extraire le numéro séquentiel de la fin
+                last_number_str = last_booking.booking_number.split("-")[-1]
+                last_number = int(last_number_str)
+                next_number = last_number + 1
+            except (ValueError, IndexError) as e:
+                # Si conversion échoue, partir de 1
+                print(f"⚠️ Erreur conversion booking_number {last_booking.booking_number}: {e}")
+                next_number = 1
+        else:
+            # Aucun booking valide trouvé pour cette année
+            next_number = 1
+        
+        return f"BK-{current_year_short}-{str(next_number).zfill(6)}"
+
+
+class BookingSegment(models.Model):
+    """
+    Modèle pour gérer les segments de voyage dans un booking aller-retour
+    """
+    OUTBOUND = "outbound"
+    RETURN = "return"
+    
+    SEGMENT_TYPE_CHOICES = [
+        (OUTBOUND, "Aller"),
+        (RETURN, "Retour"),
+    ]
+    
+    booking = models.ForeignKey(
+        'Booking',
+        on_delete=models.CASCADE,
+        related_name='segments',
+        help_text="Booking parent contenant ce segment"
+    )
+    
+    segment_type = models.CharField(
+        max_length=20,
+        choices=SEGMENT_TYPE_CHOICES,
+        help_text="Type de segment (aller ou retour)"
+    )
+    
+    estimate = models.ForeignKey(
+        'Estimate',
+        on_delete=models.CASCADE,
+        related_name='booking_segments',
+        help_text="Estimation associée à ce segment"
+    )
+    
+    status = models.CharField(
+        max_length=25,
+        choices=Booking.STATUS_CHOICES,
+        default=Booking.PENDING,
+        help_text="Statut du segment"
+    )
+    
+    segment_cost = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Coût de ce segment"
+    )
+    
+    compensation = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Compensation pour ce segment (en €)"
+    )
+    
+    commission = models.FloatField(
+        null=True, 
+        blank=True,
+        help_text="Commission pour ce segment (en %)"
+    )
+    
+    order = models.PositiveIntegerField(
+        help_text="Ordre du segment (1=aller, 2=retour)"
+    )
+    
+    is_driver_paid_segment = models.BooleanField(
+        default=False,
+        help_text="Indique si le chauffeur est payé pour ce segment"
+    )
+    
+    is_partner_paid_segment = models.BooleanField(
+        default=False,
+        help_text="Indique si le partenaire est payé pour ce segment"
+    )
+    
+    is_billable_when_cancelled = models.BooleanField(
+        default=False,
+        help_text="Si True, ce segment reste facturable même s'il est annulé"
+    )
+    
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Date de création du segment"
+    )
+    
+    class Meta:
+        verbose_name = "Segment de réservation"
+        verbose_name_plural = "Segments de réservation"
+        unique_together = ['booking', 'segment_type'] 
+        ordering = ['order']
+    
+    @property
+    def departure(self):
+        """Lieu de départ du segment"""
+        return self.estimate.estimation_log.departure
+    
+    @property
+    def destination(self):
+        """Lieu de destination du segment"""
+        return self.estimate.estimation_log.destination
+    
+    @property
+    def pickup_date(self):
+        """Date et heure de prise en charge"""
+        return self.estimate.estimation_log.pickup_date
+    
+    @property
+    def distance_travelled(self):
+        """Distance parcourue"""
+        return self.estimate.estimation_log.distance_travelled
+    
+    @property
+    def duration_travelled(self):
+        """Durée du trajet"""
+        return self.estimate.estimation_log.duration_travelled
+
+    @property
+    def calculated_driver_price(self):
+        """Prix chauffeur calculé pour ce segment"""
+        segment_cost = self.segment_cost or 0
+        if self.compensation and self.compensation > 0:
+            return segment_cost + self.compensation
+        elif self.commission and self.commission > 0:
+            commission_amount = segment_cost * (self.commission / 100)
+            return segment_cost - commission_amount
+        return segment_cost
+
+    @property
+    def calculated_partner_price(self):
+        """Prix partenaire calculé pour ce segment"""
+        return self.calculated_driver_price
+    
+    def __str__(self):
+        segment_name = "Aller" if self.segment_type == 'outbound' else "Retour"
+        return f"{segment_name} - {self.booking.booking_number} ({self.departure} → {self.destination})"
+
 class Quote(models.Model):
     """
     Model for managing quotes.
@@ -347,7 +802,7 @@ class Feedback(models.Model):
 
     def __str__(self):
         return f"Feedback for booking {self.booking.id}"
-
+ 
 class AdditionalData(models.Model):
     """
     Model for additional data related to an invoice.
@@ -407,155 +862,7 @@ class AdditionalData(models.Model):
 
     def __str__(self):
         return f"{self.item} ({self.quantity} units) - {self.total_ttc} TTC"
-      
-class Booking(models.Model):
-    """
-    Model for managing bookings.
-    """
-
-    # Status Choices
-    PENDING = "pending"
-    IN_PROCESS = "in_process"
-    ASSIGNED_TO_DRIVER = "assigned_to_driver"
-    ASSIGNED_TO_PARTNER = "assigned_to_partner"
-    NOT_ASSIGNED = "not_assigned"
-    DRIVER_NOTIFIED = "driver_notified"
-    APPROACHING = "approaching"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-
-    BILLING_NOT_INVOICED = "not_invoiced"
-    BILLING_INVOICE_REQUESTED = "invoice_requested"
-    BILLING_INVOICED = "invoiced"
-
-    NOT_CANCELLED = "not_cancelled"
-    CANCELLATION_REQUESTED = "cancellation_requested"
-    CANCELLED = "cancelled"
-    LATER = "later"
-    NOW = "now"
-
-    STATUS_CHOICES = (
-        (PENDING, "Pending"),
-        (IN_PROCESS, "In Process"),
-        (ASSIGNED_TO_DRIVER, "Assigned to Driver"),
-        (ASSIGNED_TO_PARTNER, "Assigned to Partner"),
-        (NOT_ASSIGNED, "Not Assigned"),
-        (DRIVER_NOTIFIED, "Driver Notified"),
-        (APPROACHING, "Approaching"),
-        (IN_PROGRESS, "In Progress"),
-        (COMPLETED, "Completed"),
-    )
-
-    BILLING_STATUS_CHOICES = (
-        (BILLING_NOT_INVOICED, "Not Invoiced"),
-        (BILLING_INVOICE_REQUESTED, "Invoice Requested"),
-        (BILLING_INVOICED, "Invoiced"),
-    )
-
-    CANCELLATION_STATUS_CHOICES = (
-        (NOT_CANCELLED, "Not Cancelled"),
-        (CANCELLATION_REQUESTED, "Cancellation Requested"),
-        (CANCELLED, "Cancelled"),
-    )
-    
-    PAYMENT_TIMING_CHOICES = [
-        (LATER, 'Deferred Payment'),  
-        (NOW, 'Immediate Payment'),
-    ]
-    
-    # Fields
-    is_archived = models.BooleanField(default=False, help_text="Indicates if the booking has been archived.")
-    is_driver_paid = models.BooleanField(default=False, help_text="Indicates if the driver has been paid.")
-    is_partner_paid = models.BooleanField(default=False, help_text="Indicates if the partner has been paid.")
-    client = models.ForeignKey(
-        "utilisateurs.Client",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="bookings",
-        help_text="Client associated with the booking."
-    )
-    assigned_partner = models.ForeignKey(
-        "utilisateurs.Partner",
-        related_name="partner_bookings",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        help_text="Partner assigned to the booking."
-    )
-    assigned_driver = models.ForeignKey(
-        "utilisateurs.Driver",
-        related_name="driver_bookings",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        help_text="Driver assigned to the booking."
-    )
-
-    estimate = models.ForeignKey(
-        "Estimate",
-        on_delete=models.CASCADE,
-        related_name="bookings",
-        help_text="Estimate associated with the booking."
-    )
-    driver_sale_price = models.FloatField(null=True, blank=True, help_text="Sale price for the driver")
-    partner_sale_price = models.FloatField(null=True, blank=True, help_text="Sale price for the partner.")
-    compensation = models.FloatField(null=True, blank=True, help_text="Compensation amount.")
-    commission = models.FloatField(null=True, blank=True, help_text="Commission amount.")
-    booking_number = models.CharField(max_length=255, null=True, unique=True, help_text="Unique booking number.")
-    cancellation_status = models.CharField(
-        max_length=25,
-        choices=CANCELLATION_STATUS_CHOICES,
-        default=NOT_CANCELLED,
-        help_text="Cancellation status of the booking."
-    )
-    status = models.CharField(
-        max_length=25,
-        choices=STATUS_CHOICES,
-        default=PENDING,
-        help_text="Status of the booking."
-    )
-    billing_status = models.CharField(
-        max_length=25,
-        choices=BILLING_STATUS_CHOICES,
-        default=BILLING_NOT_INVOICED,
-        help_text="Billing status of the booking."
-    )
-    payment_timing = models.CharField(
-        max_length=10,
-        choices=PAYMENT_TIMING_CHOICES,
-        default=LATER,  # ✅ DÉFAUT = 'later'
-        help_text="Indique quand le paiement sera effectué"
-    )
-    created_at = models.DateTimeField(auto_now_add=True, help_text="Date when the booking was created.")
-
-    
-    def __str__(self):
-        return f"Booking {self.booking_number or self.id}"
-
-    def save(self, *args, **kwargs):
-        """
-        Generate a booking number if it doesn't exist.
-        """
-        if not self.booking_number:
-            self.booking_number = self.generate_booking_number()
-        super().save(*args, **kwargs)
-
-    @staticmethod
-    def generate_booking_number():
-        """
-        Generate a sequential booking number using the last two digits of the current year.
-        """
-        current_year_short = datetime.now().strftime("%y")
-        last_booking = Booking.objects.filter(booking_number__startswith=f"BK-{current_year_short}").last()
-        if last_booking:
-            last_number = int(last_booking.booking_number.split("-")[-1])
-            next_number = last_number + 1
-        else:
-            next_number = 1
-        return f"BK-{current_year_short}-{str(next_number).zfill(6)}"
-
-
+     
 class Invoice(models.Model):
     """
     Model for managing invoices.

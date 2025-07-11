@@ -530,3 +530,263 @@ Le processus peut être décomposé en trois grandes étapes :
 
 ### Conclusion
 Le système est bien structuré pour gérer l'estimation et la réservation de trajets, avec une logique claire et modulaire. La simulation montre comment les données circulent entre les étapes, avec des validations rigoureuses et des réponses détaillées. Pour apporter des modifications, un développeur pourrait se concentrer sur l'optimisation des performances, l'amélioration de la gestion des erreurs, ou l'ajout de fonctionnalités comme la gestion des paiements en ligne ou des notifications push.
+
+
+# **Récapitulatif complet : Fonctionnalité Booking Aller-Retour**
+
+## **🎯 Objectif principal**
+Permettre de transformer un booking simple existant en booking aller-retour avec :
+- **Un seul booking** affiché dans les listes
+- **Actions indépendantes** sur chaque segment (aller/retour)
+- **Gestion unifiée** de la facturation et des statuts
+
+## **🏗️ Architecture retenue**
+
+### **Structure de données :**
+```
+Booking (Container principal - inchangé)
+├── Métadonnées globales : booking_number, client, created_at
+├── Nouveau champ : booking_type ('one_way' | 'round_trip')
+└── BookingSegment (nouveau modèle)
+    ├── Segment aller : estimate, status, compensation, commission
+    └── Segment retour : estimate, status, compensation, commission
+```
+
+### **Principe clé :**
+- **Modèles existants conservés** → Pas de rupture
+- **Extension par segments** → Modularité parfaite
+- **Calculs automatiques** → Agrégation depuis les segments
+
+## **⚡ Workflow utilisateur**
+
+### **Étape 1 : GET Preview**
+```
+→ Retourne les données par défaut du retour calculées automatiquement
+```
+
+**Calculs par défaut :**
+- **Adresses inversées** : departure ↔ destination
+- **Date/heure** : Date et heure actuelles de la requête
+- **Tarif** : `total_booking_cost - total_attributes_cost` de l'aller
+- **Véhicule** : Même que l'aller
+- **Passagers** : Copiés de l'aller
+- **Attributs** : Aucun par défaut
+
+### **Étape 2 : POST Transformation**
+```
+→ Confirme ou modifie les données, puis transforme le booking
+```
+
+**Traitement atomique :**
+1. Créer segment aller avec données existantes
+2. Créer estimate + segment retour avec données fournies
+3. Marquer booking comme `round_trip`
+4. Enregistrer logs + envoyer notifications
+
+## **📊 Règles métier validées**
+
+### **Données globales (non-dupliquées) :**
+- `booking_number`, `client`, `created_at`
+- `assigned_driver`, `assigned_partner` (même pour les 2)
+- `is_archived` (appliqué aux 2 segments)
+
+### **Données par segment :**
+- **Estimate complet** (trajets, coûts, passagers, attributs)
+- **Status indépendant** (aller peut être "completed", retour "pending")
+- **Compensation/Commission** par segment
+
+### **Calculs automatiques :**
+- **Coût total** = Somme des segments non-annulés
+- **Paiement chauffeur** = TRUE si TOUS segments payés
+- **Statut global** = Logique d'agrégation intelligente
+
+### **Logique de statuts :**
+- **Booking completed** = Aller completed + (Retour completed OU cancelled)
+- **Booking cancelled** = LES DEUX segments cancelled
+- **Annulation partielle** = Recalcul automatique des coûts
+
+## **🔧 Avantages de l'approche**
+
+### **✅ Performance :**
+- Pas de champs NULL inutiles dans Booking
+- Modèles existants inchangés
+- Requêtes optimisées par segment
+
+### **✅ Flexibilité :**
+- Modification libre des données avant confirmation
+- Actions indépendantes sur chaque segment
+- Partage ou duplication selon les besoins
+
+### **✅ UX optimale :**
+- Preview immédiat sans sauvegarde
+- Un booking = une ligne dans les listes
+- Facturation unifiée naturelle
+
+### **✅ Maintenabilité :**
+- Code simple et lisible
+- Pas de sur-ingénierie
+- Extension naturelle de l'existant
+
+## **🚀 Points clés de l'implémentation**
+
+### **Validations GET :**
+- Booking existe ?
+- Pas déjà aller-retour ?
+- Client fourni (hérité de l'aller) ✓
+
+### **Gestion des conflits :**
+- **Simplicité** : L'utilisateur modifie manuellement
+- **Pas de validation complexe** : Flexibilité maximale
+- **Recalculs automatiques** : Coûts, statuts, paiements
+
+### **Notifications et logs :**
+- **BookingLog** : Traçabilité par segment
+- **Notifications temps réel** : Intégration existante
+- **Emails** : Manager + client informés
+
+## **📝 Prochaines étapes**
+1. **Créer le modèle BookingSegment**
+2. **Implémenter les services GET/POST**
+3. **Adapter les APIs existantes**
+4. **Tester la transformation**
+5. **Intégrer notifications/logs**
+
+**Cette approche est optimale, pragmatique et évolutive !** 🎯
+
+
+# 🎯 Récapitulatif Logique : Fonctionnalité Duplication de Booking
+
+## **💡 Concept Central**
+
+**Utiliser une course existante comme modèle** pour créer rapidement une nouvelle course similaire, en personnalisant seulement ce qui diffère.
+
+## **🎪 Cas d'Usage Réels**
+
+### **Scénario 1 : Même trajet, autre client**
+- Course Lyon → Paris existe pour Client A
+- Client B veut le même trajet, même véhicule
+- **Solution :** Dupliquer + changer client + passagers
+
+### **Scénario 2 : Course récurrente**
+- Client fait Lyon → Aéroport tous les lundis
+- **Solution :** Dupliquer + changer date
+
+### **Scénario 3 : Adaptation de service**
+- Course berline existe, mais nouveau client a 5 passagers
+- **Solution :** Dupliquer + changer véhicule (van) + ajuster prix
+
+## **🔄 Principe de Fonctionnement**
+
+### **1. Sélection du modèle**
+L'admin choisit une course existante qui ressemble à ce qu'il veut créer
+
+### **2. Template automatique**
+Le système pré-remplit toutes les informations :
+- ✅ **Trajet, véhicule, tarifs** copiés
+- ❌ **Client vide** (obligé de choisir)
+- ❌ **Services supplémentaires vides** (besoins spécifiques)
+
+### **3. Personnalisation libre**
+L'admin modifie ce qu'il veut :
+- Nouveau client et ses passagers
+- Autre date/heure
+- Véhicule différent si besoin
+- Tarifs adaptés
+- Services additionnels
+
+### **4. Création automatique**
+Le système crée la nouvelle course complètement indépendante
+
+## **🎯 Types de Courses Supportés**
+
+### **Course Simple (Aller)**
+- Un trajet A → B
+- Template direct avec toutes les infos
+
+### **Course Aller-Retour**
+- Deux trajets A → B puis B → A
+- Template avec les deux segments
+- Possibilité de modifier chaque trajet indépendamment
+
+## **💰 Logique Tarifaire**
+
+### **Prix de base**
+Le coût du trajet original est repris comme point de départ
+
+### **Recalcul automatique**
+Si on ajoute des services (siège bébé, bagage extra...) :
+- Coût services calculé automatiquement
+- Prix total = Prix base + Services
+- Prix chauffeur recalculé selon commission/compensation
+
+### **Flexibilité totale**
+L'admin peut ajuster manuellement tous les prix si besoin
+
+## **🛡️ Règles Métier**
+
+### **Obligatoire**
+- **Nouveau client** doit être choisi (pas de duplication à l'identique)
+
+### **Intelligent**
+- **Services vides** par défaut (évite frais cachés)
+- **Assignations remises à zéro** (chauffeur/partenaire à redéfinir)
+- **Nouvelle date suggérée** (pas la même que l'original)
+
+### **Flexible**
+- **Tout peut être modifié** (trajet, véhicule, prix, détails...)
+- **Aucune contrainte rigide** sur les modifications
+
+## **⚡ Avantages Utilisateur**
+
+### **Gain de temps énorme**
+- 90% des infos déjà remplies
+- Juste personnaliser ce qui diffère
+- Pas de ressaisie manuelle
+
+### **Moins d'erreurs**
+- Configurations éprouvées réutilisées
+- Détails techniques préservés
+- Standards de service maintenus
+
+### **Flexibilité maximale**
+- Adaptation libre selon besoins
+- De simple (changer client) à complexe (tout modifier)
+- Support de tous types de courses
+
+## **🎪 Workflow Utilisateur**
+
+### **Étape 1 : "Utiliser comme modèle"**
+L'admin clique sur une course existante et choisit "Dupliquer"
+
+### **Étape 2 : Aperçu du template**
+Le système montre toutes les données pré-remplies avec :
+- Ce qui est copié (trajet, véhicule, prix...)
+- Ce qui est vide (client, services supplémentaires...)
+- Ce qui était assigné avant (chauffeur, pour info)
+
+### **Étape 3 : Personnalisation**
+L'admin modifie librement :
+- **Minimum :** Choisir le nouveau client
+- **Courant :** Client + date + quelques détails
+- **Complet :** Client + véhicule + prix + trajet + services
+
+### **Étape 4 : Validation**
+Le système crée la nouvelle course indépendante avec :
+- Nouveau numéro de réservation
+- Calculs automatiques des prix
+- Statut "En attente" par défaut
+
+## **🎁 Valeur Ajoutée**
+
+### **Pour l'efficacité**
+Création de course **5x plus rapide** pour les cas similaires
+
+### **Pour la qualité**
+Réutilisation de **configurations éprouvées** et **standards établis**
+
+### **Pour la flexibilité**
+**Aucune limitation** sur les adaptations possibles
+
+---
+
+**En résumé : Prendre une course qui marche, changer ce qui diffère, créer du neuf ! 🚀**

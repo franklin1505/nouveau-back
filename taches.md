@@ -50,3 +50,22 @@ class BookingLog(models.Model):
         return f"Log for Booking {self.booking.id} - {self.action} at {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
 
 pour garder la tracabiliter sur chaque action
+
+
+bien maintenant c'est bon 
+
+prochaine étape on va discuter des nouvelles fonctions qui cont nous permettre d'effectuer les actions suivante sur un booking aller - retour : 
+
+1- modifier les informations d'un segment ou du booking aller - retour en entier 
+
+logique de traitement proposer : on fait la mise a jour partiel soit en fonction de la demande soit sur un segment soit sur l'ensemle du booking et on enregistrer un log et on envoi un mail de modification avec une notifiation en temps reel 
+
+2- pour annuler un segment ou le booking aller - retour 
+
+logique de traitement proposer :  on fait toujours une mise a jour et on annule le segment ou le booking demander en fonction des parametre on creer un log et on envoi un mail ici il faudra aussi gerer la logique de segment ou booking annuler mais facturable 
+
+3 - valider le payement du chauffeur ou du partenaire sur un segment ou du booking 
+
+logique de traitement proposer :  on fait toujours une update des donnees en fonction des paramettre passer on creer un log et on envoi et on envoi une notification en temps reel 
+
+4- changer le statut d'un segment ou du booking aller - retour 

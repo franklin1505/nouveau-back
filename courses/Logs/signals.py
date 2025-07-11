@@ -7,6 +7,10 @@ _booking_old_values = {}
 
 @receiver(pre_save, sender=Booking)
 def store_old_booking_values(sender, instance, **kwargs):
+    # ✅ VÉRIFIER LE FLAG AVANT DE CAPTURER LES ANCIENNES VALEURS
+    if hasattr(instance, '_skip_change_tracking') and instance._skip_change_tracking:
+        return  # 🚫 SKIP LA CAPTURE DES ANCIENNES VALEURS
+    
     if instance.pk:
         try:
             old_instance = Booking.objects.select_related(
@@ -59,6 +63,14 @@ def store_old_booking_values(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Booking)
 def log_booking_save(sender, instance, created, **kwargs):
+    # ✅ VÉRIFIER LE FLAG AVANT DE LOGGER
+    if hasattr(instance, '_skip_change_tracking') and instance._skip_change_tracking:
+        # Nettoyer le flag après utilisation
+        delattr(instance, '_skip_change_tracking')
+        # Nettoyer aussi les anciennes valeurs stockées
+        _booking_old_values.pop(instance.pk, None)
+        return  # 🚫 SKIP LE LOGGING AUTOMATIQUE
+    
     if created:
         current_user = BookingLogService.get_current_user()
         if not current_user and instance.estimate and instance.estimate.estimation_log and instance.estimate.estimation_log.user:

@@ -17,19 +17,25 @@ from decimal import Decimal
 from django.template.loader import render_to_string
 from django.conf import settings
 from urllib.parse import urljoin
-
 def handle_api_exceptions(view_func):
     """Décorateur pour gérer les exceptions dans les vues API"""
     def wrapper(request, *args, **kwargs):
         try:
             return view_func(request, *args, **kwargs)
         except ValueError as e:
+            print(f"❌ ERREUR ValueError capturée: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return create_response(
                 status_type="error",
                 message=str(e),
                 http_status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            print(f"❌ ERREUR Exception capturée: {str(e)}")
+            print(f"   Type de l'erreur: {type(e)}")
+            import traceback
+            traceback.print_exc()
             return create_response(
                 status_type="error",
                 message=f"An unexpected error occurred: {str(e)}",
@@ -407,22 +413,6 @@ def update_estimation_and_create_estimate(estimation_log_id, user_id, is_code_pr
             promo_code.save()
 
     return create_estimate(request_data)
-
-# def log_booking_action(booking, user_id, action, custom_message=None):
-#     """Enregistre une action dans les logs de réservation"""
-#     user = get_object_or_404(CustomUser, id=user_id) if user_id else None
-#     predefined_messages = {
-#         "created": "La réservation a été créée avec succès.",
-#         "updated": "Les détails de la réservation ont été mis à jour.",
-#         "cancelled": "La réservation a été annulée.",
-#         "assigned_to_driver": f"La réservation a été assignée au chauffeur {user.get_full_name() if user else 'Utilisateur inconnu'}.",
-#         "assigned_to_partner": f"La réservation a été assignée au partenaire {user.get_full_name() if user else 'Utilisateur inconnu'}.",
-#         "invoice_generated": "La facture pour la réservation a été générée.",
-#         "payment_received": "Le paiement pour la réservation a été reçu.",
-#         "status_changed": f"Le statut de la réservation a été changé à '{action}'."
-#     }
-#     message = custom_message or predefined_messages.get(action, action)
-#     return BookingLog.objects.create(booking=booking, user=user, action=message)
 
 def get_selected_tariff(user_choice, estimation_tariff):
     """Retourne le tarif sélectionné"""
@@ -1025,44 +1015,152 @@ def validate_booking_data(data, request=None):
 
 def create_booking_with_payment_timing(data, payment_timing='later'):
     """Crée une réservation avec payment_timing et support admin"""
-    estimate = get_object_or_404(Estimate, id=data['estimate'])
-    user = get_object_or_404(CustomUser, id=data['client'])
+    print("\n" + "="*60)
+    print("🔍 DEBUG - create_booking_with_payment_timing")
+    print("="*60)
+    
+    print(f"📨 data reçu: {data}")
+    print(f"📨 data type: {type(data)}")
+    print(f"📨 payment_timing: {payment_timing}")
+    
+    # Vérifier chaque donnée avant utilisation
+    print("\n🔍 ANALYSE DETAILLEE DES DONNEES:")
+    for key, value in data.items():
+        print(f"   {key}: {value} (type: {type(value)})")
+    
+    print(f"\n🔍 data['estimate']: {data['estimate']} (type: {type(data['estimate'])})")
+    print(f"🔍 data['client']: {data['client']} (type: {type(data['client'])})")
+    
+    print("\n🔍 AVANT get_object_or_404(Estimate)")
+    print(f"   Recherche Estimate avec ID: {data['estimate']}")
+    try:
+        estimate = get_object_or_404(Estimate, id=data['estimate'])
+        print(f"✅ Estimate récupéré: {estimate} (ID: {estimate.id})")
+    except Exception as e:
+        print(f"❌ ERREUR get_object_or_404(Estimate): {str(e)}")
+        print(f"   Type de l'erreur: {type(e)}")
+        raise e
+    
+    print("\n🔍 AVANT get_object_or_404(CustomUser)")
+    print(f"   Recherche CustomUser avec ID: {data['client']}")
+    try:
+        user = get_object_or_404(CustomUser, id=data['client'])
+        print(f"✅ User récupéré: {user} (ID: {user.id})")
+        print(f"   User type: {user.user_type}")
+        print(f"   User email: {user.email}")
+    except Exception as e:
+        print(f"❌ ERREUR get_object_or_404(CustomUser): {str(e)}")
+        print(f"   Type de l'erreur: {type(e)}")
+        raise e
     
     # Si admin, pas de client
     if user.user_type == 'administrator':
         client_profile = None
+        print("👤 User type: administrator, client_profile = None")
     else:
         client_profile = user.client
+        print(f"👤 User type: {user.user_type}, client_profile = {client_profile}")
     
-    return Booking.objects.create(
-        compensation=data['compensation'],
-        commission=data['commission'],
-        driver_sale_price=data['driver_sale_price'],
-        partner_sale_price=data['partner_sale_price'],
-        estimate=estimate,
-        client=client_profile,
-        payment_timing=payment_timing,
-    )
+    print("\n🔍 PREPARATION DES DONNEES POUR Booking.objects.create:")
+    compensation = data['compensation']
+    commission = data['commission']
+    driver_sale_price = data['driver_sale_price']
+    partner_sale_price = data['partner_sale_price']
+    
+    print(f"   compensation: {compensation} (type: {type(compensation)})")
+    print(f"   commission: {commission} (type: {type(commission)})")
+    print(f"   driver_sale_price: {driver_sale_price} (type: {type(driver_sale_price)})")
+    print(f"   partner_sale_price: {partner_sale_price} (type: {type(partner_sale_price)})")
+    print(f"   estimate: {estimate}")
+    print(f"   client_profile: {client_profile}")
+    print(f"   payment_timing: {payment_timing}")
+    
+    print("\n🔍 AVANT Booking.objects.create")
+    try:
+        booking = Booking.objects.create(
+            compensation=compensation,
+            commission=commission,
+            driver_sale_price=driver_sale_price,
+            partner_sale_price=partner_sale_price,
+            estimate=estimate,
+            client=client_profile,
+            payment_timing=payment_timing,
+        )
+        print(f"✅ Booking créé avec succès: {booking}")
+        print(f"   Booking ID: {booking.id}")
+        print(f"   Booking number: {booking.booking_number}")
+        print("="*60)
+        return booking
+    except Exception as e:
+        print(f"❌ ERREUR Booking.objects.create: {str(e)}")
+        print(f"   Type de l'erreur: {type(e)}")
+        import traceback
+        print(f"   Traceback complet:")
+        traceback.print_exc()
+        print("="*60)
+        raise e
 
 def create_booking(data):
     """Crée une réservation avec support admin"""
-    estimate = get_object_or_404(Estimate, id=data['estimate'])
-    user = get_object_or_404(CustomUser, id=data['client'])
+    print("\n" + "="*60)
+    print("🔍 DEBUG - create_booking")
+    print("="*60)
+    
+    print(f"📨 data reçu: {data}")
+    print(f"📨 data type: {type(data)}")
+    
+    # Vérifier chaque donnée avant utilisation
+    print("\n🔍 ANALYSE DETAILLEE DES DONNEES:")
+    for key, value in data.items():
+        print(f"   {key}: {value} (type: {type(value)})")
+    
+    print(f"\n🔍 data['estimate']: {data['estimate']} (type: {type(data['estimate'])})")
+    print(f"🔍 data['client']: {data['client']} (type: {type(data['client'])})")
+    
+    print("\n🔍 AVANT get_object_or_404(Estimate)")
+    try:
+        estimate = get_object_or_404(Estimate, id=data['estimate'])
+        print(f"✅ Estimate récupéré: {estimate}")
+    except Exception as e:
+        print(f"❌ ERREUR get_object_or_404(Estimate): {str(e)}")
+        raise e
+    
+    print("\n🔍 AVANT get_object_or_404(CustomUser)")
+    try:
+        user = get_object_or_404(CustomUser, id=data['client'])
+        print(f"✅ User récupéré: {user}")
+    except Exception as e:
+        print(f"❌ ERREUR get_object_or_404(CustomUser): {str(e)}")
+        raise e
     
     # Si admin, pas de client
     if user.user_type == 'administrator':
         client_profile = None
+        print("👤 User type: administrator, client_profile = None")
     else:
         client_profile = user.client
+        print(f"👤 User type: {user.user_type}, client_profile = {client_profile}")
     
-    return Booking.objects.create(
-        compensation=data['compensation'],
-        commission=data['commission'],
-        driver_sale_price=data['driver_sale_price'],
-        partner_sale_price=data['partner_sale_price'],
-        estimate=estimate,
-        client=client_profile,
-    )
+    print("\n🔍 AVANT Booking.objects.create")
+    try:
+        booking = Booking.objects.create(
+            compensation=data['compensation'],
+            commission=data['commission'],
+            driver_sale_price=data['driver_sale_price'],
+            partner_sale_price=data['partner_sale_price'],
+            estimate=estimate,
+            client=client_profile,
+        )
+        print(f"✅ Booking créé avec succès: {booking}")
+        print("="*60)
+        return booking
+    except Exception as e:
+        print(f"❌ ERREUR Booking.objects.create: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print("="*60)
+        raise e
+
 
 def create_estimate(request_data):
     """Crée une estimation avec MeetingPlace optionnel"""

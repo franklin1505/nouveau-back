@@ -1,5 +1,7 @@
 from django.utils import timezone
-from courses.models import Booking
+from courses.Reservations.Reservations_details.helpers import calculate_attributes_cost, extract_booking_template_data, shorten_address, should_create_separate_estimate
+from courses.Reservations.helpers import apply_commission_or_compensation
+from courses.models import Booking, BookingSegment, Estimate, EstimateAttribute, EstimationLog, Passenger
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
@@ -128,3 +130,4 @@ class BookingStatsService:
     @transaction.atomic
     def update_booking_complete(booking_id, validated_data):
         return BookingStatsService.get_booking_by_id(booking_id)
+    
