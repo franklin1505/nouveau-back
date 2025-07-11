@@ -3,12 +3,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.http import Http404
 
-from courses.Reservations.helpers import create_response, format_booking_data, handle_api_exceptions, send_unified_emails_with_notifications
-from courses.models import Booking, BookingLog, BookingSegment
+from courses.Reservations.communication_service import send_duplication_communications, send_round_trip_communications
+from courses.Reservations.helpers import create_response, handle_api_exceptions
+from courses.models import Booking, BookingSegment
 from .services import BookingStatsService
-from .serializers import BookingSegmentSerializer, DuplicateModificationSerializer, GlobalBookingStatisticsSerializer, BookingCompleteSerializer, BookingUpdateSerializer, ReturnTripDataSerializer, RoundTripBookingSerializer, RoundTripDuplicateModificationSerializer
+from .serializers import BookingSegmentSerializer, DuplicateModificationSerializer, GlobalBookingStatisticsSerializer, BookingCompleteSerializer, BookingUpdateSerializer, ReturnTripDataSerializer, RoundTripDuplicateModificationSerializer
 from .pagination import BookingPagination
-from .helpers import convert_booking_to_round_trip, create_transformation_log_safe, duplicate_booking_unified, extract_booking_filters, extract_scope_and_search_key, build_empty_detail_response, build_global_stats_response, build_detail_response, format_round_trip_booking_data, generate_duplicate_preview, generate_return_preview, send_round_trip_emails_with_notifications, validate_booking_for_duplication, validate_detail_request, validate_booking_detail_request
+from .helpers import convert_booking_to_round_trip, create_transformation_log_safe, duplicate_booking_unified, extract_booking_filters, extract_scope_and_search_key, build_empty_detail_response, build_global_stats_response, build_detail_response, format_duplication_booking_data, format_round_trip_booking_data, generate_duplicate_preview, generate_return_preview, validate_booking_for_duplication, validate_detail_request, validate_booking_detail_request
 
 class GlobalBookingStatisticsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -245,10 +246,155 @@ class BookingSegmentUpdateView(APIView):
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class BookingDuplicatePreviewView(APIView):
+    """Vue pour générer un aperçu de duplication"""
+    permission_classes = [IsAuthenticated]
+    
+    @handle_api_exceptions
+    def get(self, request, booking_id):
+        try:
+            preview_data = generate_duplicate_preview(booking_id)
+            return create_response(
+                status_type="success",
+                message="Aperçu de duplication généré avec succès",
+                data=preview_data,
+                http_status=status.HTTP_200_OK
+            )
+        except ValueError as e:
+            return create_response(
+                status_type="error",
+                message=str(e),
+                http_status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return create_response(
+                status_type="error",
+                message=f"Erreur lors de la génération de l'aperçu: {str(e)}",
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class BookingDuplicateCreateView(APIView):
+    """Vue pour créer une duplication de booking avec communications centralisées"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self, booking_type):
+        """Retourne le bon serializer selon le type"""
+        return RoundTripDuplicateModificationSerializer if booking_type == 'round_trip' else DuplicateModificationSerializer
+    
+    @handle_api_exceptions
+    def post(self, request, booking_id):
+        try:
+            # Validation du booking source
+            source_booking, error = validate_booking_for_duplication(booking_id)
+            if error:
+                return create_response(status_type="error", message=error, http_status=status.HTTP_404_NOT_FOUND)
+            
+            # Validation des données
+            serializer_class = self.get_serializer_class(source_booking.booking_type)
+            serializer = serializer_class(data=request.data)
+            if not serializer.is_valid():
+                return create_response(
+                    status_type="error", 
+                    message="Données invalides", 
+                    data=serializer.errors, 
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Duplication
+            result = duplicate_booking_unified(booking_id, serializer.validated_data, request.user)
+            
+            # ✅ ENVOI DES COMMUNICATIONS CENTRALISÉES
+            try:
+                comm_success, comm_message = send_duplication_communications(
+                    new_booking_id=result['new_booking_id'],
+                    source_booking_id=booking_id,
+                    user=request.user
+                )
+            except Exception as comm_error:
+                print(f"Erreur communications duplication: {comm_error}")
+                comm_success = False
+                comm_message = f"Erreur envoi: {str(comm_error)}"
+            
+            # Récupération et formatage du nouveau booking
+            new_booking = Booking.objects.get(id=result['new_booking_id'])
+            display_data = format_duplication_booking_data(new_booking, include_request_data=False)
+
+            # Détails des communications
+            communication_details = []
+            if comm_success:
+                if new_booking.client:
+                    communication_details.append("Email client envoyé")
+                else:
+                    # Compter les passagers avec email pour réservations admin
+                    if new_booking.booking_type == 'round_trip':
+                        segments = display_data["display_data"].get("segments", [])
+                        passenger_emails = 0
+                        for segment in segments:
+                            if 'estimate' in segment and 'passengers' in segment['estimate']:
+                                for passenger in segment['estimate']['passengers']:
+                                    if passenger.get("email") and passenger["email"] != "Non renseigné":
+                                        passenger_emails += 1
+                        if passenger_emails > 0:
+                            communication_details.append(f"Emails passagers envoyés ({passenger_emails})")
+                        else:
+                            communication_details.append("Aucun passager avec email")
+                    else:
+                        passengers = display_data["display_data"].get("passengers", [])
+                        passenger_emails = sum(1 for p in passengers if p.get("email") and p["email"] != "Non renseigné")
+                        if passenger_emails > 0:
+                            communication_details.append(f"Emails passagers envoyés ({passenger_emails})")
+                        else:
+                            communication_details.append("Aucun passager avec email")
+                
+                communication_details.append("Email manager envoyé")
+                communication_details.append("Notification créée")
+            
+            # Réponse
+            response_data = {
+                **result,
+                "new_booking_details": display_data["display_data"],
+                "duplication_summary": {
+                    "user": f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
+                    "source_booking": result['source_booking_number'],
+                    "new_booking": result['new_booking_number'],
+                    "booking_type": result['booking_type'],
+                    "total_cost": result['total_cost'],
+                    "estimates_created": result['estimates_created']
+                },
+                "communication_status": {
+                    "emails_sent": comm_success,
+                    "notifications_sent": comm_success,
+                    "details": communication_details,
+                    "status_message": comm_message
+                }
+            }
+            
+            # Message de succès adaptatif
+            if comm_success:
+                success_message = "Booking dupliqué avec succès. Emails et notifications envoyés."
+            else:
+                success_message = "Booking dupliqué avec succès. Attention: problème envoi communications."
+            
+            return create_response(
+                status_type="success",
+                message=success_message,
+                data=response_data,
+                http_status=status.HTTP_201_CREATED
+            )
+            
+        except ValueError as e:
+            return create_response(status_type="error", message=str(e), http_status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return create_response(
+                status_type="error", 
+                message=f"Erreur lors de la duplication: {str(e)}", 
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 class BookingReturnCreateView(APIView):
     """
     Vue pour créer le trajet retour et transformer en aller-retour
-    Avec envoi d'emails et notifications en temps réel
+    Avec envoi d'emails et notifications centralisés
     """
     permission_classes = [IsAuthenticated]
     
@@ -261,7 +407,7 @@ class BookingReturnCreateView(APIView):
     
     @handle_api_exceptions
     def post(self, request, booking_id):
-        """Crée le trajet retour et transforme en aller-retour avec emails et notifications"""
+        """Crée le trajet retour et transforme en aller-retour avec communications centralisées"""
         
         try:
             # 1. Validation des données
@@ -289,17 +435,21 @@ class BookingReturnCreateView(APIView):
             booking = Booking.objects.get(id=booking_id)
             display_data = format_round_trip_booking_data(booking, include_request_data=False)
             
-            # 5. 🔥 ENVOI DES EMAILS ET NOTIFICATIONS EN TEMPS RÉEL
+            # 5. ✅ ENVOI DES COMMUNICATIONS CENTRALISÉES
             try:
-                email_success, email_status = send_round_trip_emails_with_notifications(booking_id)
-            except Exception as email_error:
-                print(f"Erreur envoi emails/notifications aller-retour: {email_error}")
-                email_success = False
-                email_status = f"Erreur envoi: {str(email_error)}"
+                comm_success, comm_message = send_round_trip_communications(
+                    booking_id=booking_id,
+                    return_data=validated_data,
+                    user=request.user
+                )
+            except Exception as comm_error:
+                print(f"Erreur communications aller-retour: {comm_error}")
+                comm_success = False
+                comm_message = f"Erreur envoi: {str(comm_error)}"
             
             # 6. Détails sur les communications envoyées
             communication_details = []
-            if email_success:
+            if comm_success:
                 if booking.client:
                     communication_details.append("Email client envoyé")
                 else:
@@ -331,19 +481,18 @@ class BookingReturnCreateView(APIView):
                     "return_date": validated_data.get('pickup_date'),
                     "return_cost": validated_data.get('total_cost'),
                     "logs_created": result.get('logs_created', False),
-                    "emails_sent": email_success,
-                    "email_status": email_status
+                    "communications_sent": comm_success
                 },
                 "communication_status": {
-                    "emails_sent": email_success,
-                    "notifications_sent": email_success,
+                    "emails_sent": comm_success,
+                    "notifications_sent": comm_success,
                     "details": communication_details,
-                    "status_message": email_status
+                    "status_message": comm_message
                 }
             }
             
             # 8. Message de succès adaptatif
-            if email_success:
+            if comm_success:
                 success_message = "Réservation transformée en aller-retour avec succès. Emails et notifications envoyés."
             else:
                 success_message = "Réservation transformée en aller-retour avec succès. Attention: problème envoi communications."
@@ -365,98 +514,5 @@ class BookingReturnCreateView(APIView):
             return create_response(
                 status_type="error",
                 message=f"Erreur lors de la transformation: {str(e)}",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-class BookingDuplicatePreviewView(APIView):
-    """Vue pour générer un aperçu de duplication"""
-    permission_classes = [IsAuthenticated]
-    
-    @handle_api_exceptions
-    def get(self, request, booking_id):
-        try:
-            preview_data = generate_duplicate_preview(booking_id)
-            return create_response(
-                status_type="success",
-                message="Aperçu de duplication généré avec succès",
-                data=preview_data,
-                http_status=status.HTTP_200_OK
-            )
-        except ValueError as e:
-            return create_response(
-                status_type="error",
-                message=str(e),
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return create_response(
-                status_type="error",
-                message=f"Erreur lors de la génération de l'aperçu: {str(e)}",
-                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-class BookingDuplicateCreateView(APIView):
-    """Vue pour créer une duplication de booking"""
-    permission_classes = [IsAuthenticated]
-    
-    def get_serializer_class(self, booking_type):
-        """Retourne le bon serializer selon le type"""
-        return RoundTripDuplicateModificationSerializer if booking_type == 'round_trip' else DuplicateModificationSerializer
-    
-    @handle_api_exceptions
-    def post(self, request, booking_id):
-        try:
-            # Validation du booking source
-            source_booking, error = validate_booking_for_duplication(booking_id)
-            if error:
-                return create_response(status_type="error", message=error, http_status=status.HTTP_404_NOT_FOUND)
-            
-            # Validation des données
-            serializer_class = self.get_serializer_class(source_booking.booking_type)
-            serializer = serializer_class(data=request.data)
-            if not serializer.is_valid():
-                return create_response(
-                    status_type="error", 
-                    message="Données invalides", 
-                    data=serializer.errors, 
-                    http_status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Duplication
-            result = duplicate_booking_unified(booking_id, serializer.validated_data, request.user)
-            
-            # Récupération et formatage du nouveau booking
-            new_booking = Booking.objects.get(id=result['new_booking_id'])
-            display_data = (format_round_trip_booking_data(new_booking, include_request_data=False) 
-                          if new_booking.booking_type == 'round_trip' 
-                          else format_booking_data(booking=new_booking, include_request_data=False))
-            
-            # Réponse
-            response_data = {
-                **result,
-                "new_booking_details": display_data["display_data"],
-                "duplication_summary": {
-                    "user": f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
-                    "source_booking": result['source_booking_number'],
-                    "new_booking": result['new_booking_number'],
-                    "booking_type": result['booking_type'],
-                    "total_cost": result['total_cost'],
-                    "estimates_created": result['estimates_created']
-                }
-            }
-            
-            return create_response(
-                status_type="success",
-                message="Booking dupliqué avec succès",
-                data=response_data,
-                http_status=status.HTTP_201_CREATED
-            )
-            
-        except ValueError as e:
-            return create_response(status_type="error", message=str(e), http_status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return create_response(
-                status_type="error", 
-                message=f"Erreur lors de la duplication: {str(e)}", 
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

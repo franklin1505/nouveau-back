@@ -1,0 +1,357 @@
+<!-- fichiers_mails/email_booking_duplicated_client.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmation de réservation - {{ reservation_details.booking_number }}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 300;
+        }
+        .header .booking-number {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 10px;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        .content {
+            padding: 30px;
+        }
+        .highlight-box {
+            background: linear-gradient(135deg, #28a74515, #20c99715);
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .highlight-box h3 {
+            margin-top: 0;
+            color: #28a745;
+            font-size: 20px;
+        }
+        .trip-details {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+        .trip-details h3 {
+            color: #495057;
+            margin-top: 0;
+            font-size: 22px;
+        }
+        .route {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #28a745;
+        }
+        .route-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 18px;
+        }
+        .arrow {
+            color: #6c757d;
+            font-size: 20px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+        }
+        .info-item label {
+            font-weight: bold;
+            color: #495057;
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .info-item value {
+            color: #212529;
+            font-size: 16px;
+        }
+        .pricing-summary {
+            background: linear-gradient(135deg, #28a74515, #20c99715);
+            border: 2px solid #28a745;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+        .pricing-summary h3 {
+            color: #28a745;
+            margin-top: 0;
+            font-size: 22px;
+            text-align: center;
+        }
+        .price-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .price-item:last-child {
+            border-bottom: none;
+            font-weight: bold;
+            font-size: 18px;
+            color: #28a745;
+        }
+        .passengers-list {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .passengers-list h4 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .passenger {
+            background: white;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border-left: 4px solid #28a745;
+        }
+        .passenger.main {
+            border-left-color: #ffc107;
+            background: #fff3cd;
+        }
+        .footer {
+            background: #343a40;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            margin: 15px 10px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        .btn:hover {
+            background: #218838;
+        }
+        .btn.secondary {
+            background: #6c757d;
+        }
+        .btn.secondary:hover {
+            background: #5a6268;
+        }
+        
+        /* Responsive */
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .content {
+                padding: 20px;
+            }
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+            .route-info {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>✅ Confirmation de Réservation</h1>
+            <div class="booking-number">{{ reservation_details.booking_number }}</div>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <!-- Greeting -->
+            <div class="highlight-box">
+                <h3>Bonjour {{ recipient_name }} !</h3>
+                <p>Nous avons le plaisir de vous confirmer que votre réservation a bien été enregistrée. 
+                Voici le récapitulatif complet de votre trajet.</p>
+            </div>
+
+            <!-- Trip Details -->
+            <div class="trip-details">
+                <h3>🚗 Détails de votre trajet</h3>
+                
+                <div class="route">
+                    <div class="route-info">
+                        <span>{{ reservation_details.estimation_log.departure }}</span>
+                        <span class="arrow">→</span>
+                        <span>{{ reservation_details.estimation_log.destination }}</span>
+                    </div>
+                    <div style="color: #6c757d;">
+                        📅 {{ reservation_details.estimation_log.pickup_date|date:"d/m/Y à H:i" }}
+                    </div>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>Véhicule</label>
+                        <value>{{ reservation_details.vehicle.brand }} {{ reservation_details.vehicle.model }}</value>
+                    </div>
+                    <div class="info-item">
+                        <label>Passagers</label>
+                        <value>{{ reservation_details.number_of_passengers }}</value>
+                    </div>
+                    {% if reservation_details.number_of_luggages %}
+                    <div class="info-item">
+                        <label>Bagages</label>
+                        <value>{{ reservation_details.number_of_luggages }}</value>
+                    </div>
+                    {% endif %}
+                    {% if reservation_details.flight_number %}
+                    <div class="info-item">
+                        <label>Vol/Train</label>
+                        <value>{{ reservation_details.flight_number }}</value>
+                    </div>
+                    {% endif %}
+                </div>
+
+                {% if reservation_details.meeting_place and reservation_details.meeting_place != "Aucun lieu de rendez-vous spécifié" %}
+                <div class="info-item" style="margin-top: 15px;">
+                    <label>Lieu de rendez-vous</label>
+                    <value>{{ reservation_details.meeting_place }}</value>
+                </div>
+                {% endif %}
+
+                {% if reservation_details.message %}
+                <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #28a745;">
+                    <strong>Instructions spéciales :</strong><br>
+                    {{ reservation_details.message }}
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Pricing -->
+            <div class="pricing-summary">
+                <h3>💰 Récapitulatif Tarifaire</h3>
+                
+                {% if reservation_details.total_attributes_cost and reservation_details.total_attributes_cost > 0 %}
+                <div class="price-item">
+                    <span>Trajet</span>
+                    <span>{{ reservation_details.total_trajet }}€</span>
+                </div>
+                <div class="price-item">
+                    <span>Services supplémentaires</span>
+                    <span>{{ reservation_details.total_attributes_cost }}€</span>
+                </div>
+                {% endif %}
+                
+                <div class="price-item">
+                    <span>Total TTC</span>
+                    <span>{{ reservation_details.total_booking_cost }}€</span>
+                </div>
+            </div>
+
+            <!-- Passengers -->
+            {% if reservation_details.passengers %}
+            <div class="passengers-list">
+                <h4>👥 Passagers</h4>
+                {% for passenger in reservation_details.passengers %}
+                <div class="passenger {% if passenger.is_main_client %}main{% endif %}">
+                    <strong>{{ passenger.name }}</strong>
+                    {% if passenger.is_main_client %} (Client principal){% endif %}<br>
+                    📞 {{ passenger.phone_number }}
+                    {% if passenger.email and passenger.email != "Non renseigné" %}
+                    <br>📧 {{ passenger.email }}
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Additional Services -->
+            {% if reservation_details.estimate_attribute %}
+            <div class="passengers-list">
+                <h4>🎁 Services supplémentaires</h4>
+                {% for attribute in reservation_details.estimate_attribute %}
+                <div class="passenger">
+                    <strong>{{ attribute.attribute_name }}</strong><br>
+                    {{ attribute.quantity }} x {{ attribute.unit_price }}€ = {{ attribute.total }}€
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Payment Information -->
+            {% if reservation_details.payment_method %}
+            <div class="highlight-box">
+                <h3>💳 Informations de Paiement</h3>
+                <p><strong>Méthode :</strong> {{ reservation_details.payment_method }}</p>
+                {% if reservation_details.payment_instructions %}
+                <p>{{ reservation_details.payment_instructions }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{ pdf_url }}" class="btn">📄 Télécharger le PDF</a>
+                <a href="mailto:{{ business_info.email }}" class="btn secondary">✉️ Nous Contacter</a>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <h3>{{ business_info.name }}</h3>
+            <p>
+                📧 {{ business_info.email }} | 📞 {{ business_info.phone_number }}<br>
+                📍 {{ business_info.address }}
+            </p>
+            <p style="margin-top: 20px; font-size: 14px; opacity: 0.8;">
+                Merci de votre confiance pour votre transport !
+            </p>
+        </div>
+    </div>
+</body>
+</html>

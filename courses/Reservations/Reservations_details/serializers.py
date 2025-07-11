@@ -701,9 +701,124 @@ class BaseDuplicateSerializer(serializers.Serializer):
             )
         return data
 
-class DuplicateModificationSerializer(BaseDuplicateSerializer):
+# courses/Reservations/Reservations_details/serializers.py (section à modifier)
+
+class DuplicateModificationSerializer(serializers.Serializer):
     """Serializer pour les modifications de duplication one_way"""
-    pass
+    
+    # Champs obligatoires
+    client_id = serializers.IntegerField()
+    pickup_date = serializers.DateTimeField()
+    departure = serializers.CharField()
+    destination = serializers.CharField()
+    vehicle_id = serializers.IntegerField()
+    number_of_passengers = serializers.IntegerField()
+    number_of_luggages = serializers.IntegerField()
+    total_booking_cost = serializers.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Champs optionnels
+    waypoints = serializers.ListField(child=serializers.CharField(), default=list)
+    payment_method_id = serializers.IntegerField(required=False, allow_null=True)
+    meeting_place_id = serializers.IntegerField(required=False, allow_null=True)
+    flight_number = serializers.CharField(default='', allow_blank=True)
+    message = serializers.CharField(default='', allow_blank=True)
+    case_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    compensation = serializers.DecimalField(max_digits=10, decimal_places=2, default=0)
+    commission = serializers.DecimalField(max_digits=10, decimal_places=2, default=0)
+    assigned_driver_id = serializers.IntegerField(required=False, allow_null=True)
+    assigned_partner_id = serializers.IntegerField(required=False, allow_null=True)
+    
+    # ✅ CORRECTION : Passagers avec structure existing/new
+    passengers = serializers.DictField(
+        child=serializers.ListField(),
+        default=dict,
+        help_text="Structure: {'existing': [1,2,3], 'new': [{'name': '...', 'phone_number': '...'}]}"
+    )
+    
+    # Attributs d'estimation
+    estimate_attributes = serializers.ListField(
+        child=serializers.DictField(), 
+        default=list,
+        help_text="Liste d'attributs: [{'attribute': 1, 'quantity': 2}]"
+    )
+    
+    def validate_passengers(self, value):
+        """Valide la structure des passagers"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Les passagers doivent être un dictionnaire avec 'existing' et 'new'.")
+        
+        # Valider existing
+        existing = value.get('existing', [])
+        if not isinstance(existing, list):
+            raise serializers.ValidationError("'existing' doit être une liste d'IDs.")
+        
+        for passenger_id in existing:
+            if not isinstance(passenger_id, int):
+                raise serializers.ValidationError("Les IDs de passagers existants doivent être des entiers.")
+        
+        # Valider new
+        new = value.get('new', [])
+        if not isinstance(new, list):
+            raise serializers.ValidationError("'new' doit être une liste de nouveaux passagers.")
+        
+        for passenger in new:
+            if not isinstance(passenger, dict):
+                raise serializers.ValidationError("Chaque nouveau passager doit être un dictionnaire.")
+            
+            if 'name' not in passenger or 'phone_number' not in passenger:
+                raise serializers.ValidationError("Chaque nouveau passager doit avoir 'name' et 'phone_number'.")
+        
+        return value
+    
+    def validate_estimate_attributes(self, value):
+        """Valide les attributs d'estimation"""
+        for attr in value:
+            if 'attribute' not in attr or 'quantity' not in attr:
+                raise serializers.ValidationError("Chaque attribut doit avoir 'attribute' et 'quantity'.")
+        return value
+
+class RoundTripDuplicateModificationSerializer(serializers.Serializer):
+    """Serializer pour les modifications de duplication round_trip"""
+    
+    # Champs obligatoires
+    client_id = serializers.IntegerField()
+    
+    # Modifications partagées
+    shared_modifications = serializers.DictField(default=dict)
+    
+    # Modifications spécifiques par segment
+    outbound_modifications = serializers.DictField(default=dict)
+    return_modifications = serializers.DictField(default=dict)
+    
+    def validate_shared_modifications(self, value):
+        """Valide les modifications partagées"""
+        # ✅ CORRECTION : Valider les passagers partagés si présents
+        if 'passengers' in value:
+            passengers = value['passengers']
+            if not isinstance(passengers, dict):
+                raise serializers.ValidationError("Les passagers partagés doivent être un dictionnaire.")
+        
+        return value
+    
+    def validate_outbound_modifications(self, value):
+        """Valide les modifications du segment aller"""
+        # ✅ CORRECTION : Valider les passagers du segment aller si présents
+        if 'passengers' in value:
+            passengers = value['passengers']
+            if not isinstance(passengers, dict):
+                raise serializers.ValidationError("Les passagers aller doivent être un dictionnaire.")
+        
+        return value
+    
+    def validate_return_modifications(self, value):
+        """Valide les modifications du segment retour"""
+        # ✅ CORRECTION : Valider les passagers du segment retour si présents
+        if 'passengers' in value:
+            passengers = value['passengers']
+            if not isinstance(passengers, dict):
+                raise serializers.ValidationError("Les passagers retour doivent être un dictionnaire.")
+        
+        return value
 
 class RoundTripDuplicateModificationSerializer(serializers.Serializer):
     """Serializer pour les modifications de duplication round_trip"""

@@ -1,16 +1,51 @@
+# courses/Reservations/Reservations_details/helpers.py
+
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework import status
 from django.db import transaction
-from configurations.notification_service import NotificationService
 from courses.Reservations.helpers import apply_commission_or_compensation, create_response, format_booking_data
 from courses.models import Booking, BookingSegment, Estimate, EstimateAttribute, EstimationLog, Passenger
-from utilisateurs.helpers import get_business_info, send_email
-from django.template.loader import render_to_string
+from parametrages.models import APIKey
+from courses.Estimations.helpers import calculate_distances_and_durations
 
-from utilisateurs.models import Administrator, Business
+# ============== NOUVEAU : CALCUL AUTOMATIQUE DES MÉTRIQUES ==============
 
-# ============== UTILITAIRES DE BASE ==============
+def calculate_trip_metrics(departure, destination, waypoints=None, api_key=None):
+    """
+    Calcule automatiquement distance et durée pour un trajet
+    Réutilisable pour duplication et aller-retour
+    """
+    try:
+        if not api_key:
+            api_key_obj = APIKey.objects.first()
+            if not api_key_obj:
+                return {"distance_travelled": 0, "duration_travelled": "0h0min"}
+            api_key = api_key_obj.key_value
+        
+        # Utiliser la fonction existante calculate_distances_and_durations
+        # Pour un trajet simple, on n'a pas besoin de base (origin=None)
+        result = calculate_distances_and_durations(
+            api_key, departure, destination, origin=None, waypoints=waypoints
+        )
+        
+        # Formater la durée en format lisible
+        duration_minutes = result["dur_parcourt_minutes"]
+        hours = int(duration_minutes // 60)
+        minutes = int(duration_minutes % 60)
+        duration_formatted = f"{hours}h{minutes:02d}min"
+        
+        return {
+            "distance_travelled": round(result["dist_parcourt_km"], 2),
+            "duration_travelled": duration_formatted
+        }
+        
+    except Exception as e:
+        print(f"Erreur calcul métriques pour {departure} → {destination}: {e}")
+        # Valeurs par défaut en cas d'erreur
+        return {"distance_travelled": 0, "duration_travelled": "0h0min"}
+
+# ============== UTILITAIRES DE BASE (inchangés) ==============
 
 def get_query_params(request):
     """Get query parameters compatible with Django and DRF"""
@@ -37,7 +72,7 @@ def extract_scope_and_search_key(request):
         'search_key': query_params.get('search_key')
     }
 
-# ============== VALIDATIONS ==============
+# ============== VALIDATIONS (inchangées) ==============
 
 def validate_search_key(search_key):
     """Validate search_key parameter"""
@@ -99,7 +134,7 @@ def validate_booking_detail_request(booking_id):
     
     return True, None
 
-# ============== CONSTRUCTEURS DE RÉPONSES ==============
+# ============== CONSTRUCTEURS DE RÉPONSES (inchangés) ==============
 
 def build_empty_stats_response(model_class):
     """Build empty sub-stats when no data found"""
@@ -153,7 +188,7 @@ def build_empty_detail_response(model_class):
         }
     )
 
-# ============== SÉRIALISEURS UNIFIÉS ==============
+# ============== SÉRIALISEURS UNIFIÉS (inchangés) ==============
 
 class DataSerializer:
     """Classe unifiée pour la sérialisation de tous les objets"""
@@ -365,7 +400,7 @@ class DataSerializer:
             'assigned_partner': DataSerializer.serialize_partner(booking.assigned_partner)
         }
 
-# ============== LOGIQUE MÉTIER ==============
+# ============== LOGIQUE MÉTIER OPTIMISÉE ==============
 
 def should_create_separate_estimate(original_estimate, return_data):
     """Détermine s'il faut créer un nouvel estimate ou réutiliser l'existant"""
@@ -411,8 +446,15 @@ def calculate_base_cost(original_estimate):
                (original_estimate.total_attributes_cost or 0), 0)
 
 def create_return_estimation_log(return_data, original_booking):
-    """Crée un nouvel EstimationLog pour le retour"""
+    """Crée un nouvel EstimationLog pour le retour avec calculs automatiques"""
     original_log = original_booking.estimate.estimation_log
+    
+    # ✅ CALCUL AUTOMATIQUE des métriques
+    metrics = calculate_trip_metrics(
+        return_data['departure'],
+        return_data['destination'], 
+        return_data.get('waypoints', [])
+    )
     
     return EstimationLog.objects.create(
         departure=return_data['departure'],
@@ -422,8 +464,8 @@ def create_return_estimation_log(return_data, original_booking):
         estimate_type=original_log.estimate_type,
         user=original_log.user,
         is_booked=True,
-        distance_travelled=return_data.get('distance_travelled', 0),
-        duration_travelled=return_data.get('duration_travelled', '0h0min')
+        distance_travelled=metrics["distance_travelled"],  # ✅ AUTOMATIQUE
+        duration_travelled=metrics["duration_travelled"]   # ✅ AUTOMATIQUE
     )
 
 def create_return_estimate(return_data, original_booking):
@@ -490,7 +532,7 @@ def create_return_estimate(return_data, original_booking):
     
     return return_estimate
 
-# ============== FONCTION PRINCIPALE ==============
+# ============== FONCTION PRINCIPALE ALLER-RETOUR ==============
 
 def generate_return_preview(booking_id):
     """Génère un aperçu complet du trajet retour - VERSION SANS DUPLICATION"""
@@ -529,8 +571,6 @@ def generate_return_preview(booking_id):
         'number_of_passengers': original_estimate.number_of_passengers,  # Copié
         'number_of_luggages': original_estimate.number_of_luggages,  # Copié
         'waypoints': [],  # Vide par défaut
-        'distance_travelled': original_log.distance_travelled,  # Même distance estimée
-        'duration_travelled': original_log.duration_travelled,  # Même durée estimée
         'compensation': 0,  # Par défaut
         'commission': 0,  # Par défaut
         'status': 'pending'  # Statut par défaut du retour
@@ -632,7 +672,6 @@ def convert_booking_to_round_trip(booking_id, return_data, user=None):
                 final_message = f"{base_message}. {', '.join(additions)}." if additions else f"{base_message}."
                 
                 # ✅ LOG BUSINESS PERSONNALISÉ DIRECTEMENT EN BASE
-                from courses.Logs.services import BookingLogService
                 from courses.models import BookingLog
                 
                 # CRÉATION DIRECTE POUR ÉVITER TOUT CONFLIT
@@ -801,220 +840,6 @@ def format_date_business(date_input):
         print(f"Erreur format_date_business: {e}")
         return str(date_input)[:10] if date_input else "Date non définie"
 
-
-    
-def get_round_trip_unified_context(booking_id):
-    """Prépare le contexte unifié pour aller-retour"""
-    booking = Booking.objects.get(id=booking_id)
-    business_info = get_business_info()
-    
-    # Données formatées du booking aller-retour
-    booking_data = format_round_trip_booking_data(booking, include_request_data=False)
-    round_trip_details = booking_data["display_data"]
-    
-    # Informations sur qui a créé la transformation
-    booking_creator = get_booking_creator_info(booking)
-    
-    # URL du PDF (sera mise à jour pour aller-retour si nécessaire)
-    pdf_url = f"{business_info['operator_url']}/api/reservations/booking/{booking_id}/pdf/"
-    
-    # Calculs financiers détaillés
-    financial_summary = {
-        'outbound_cost': 0,
-        'return_cost': 0,
-        'total_cost': round_trip_details.get('total_cost', 0),
-        'total_compensation': round_trip_details.get('total_compensation', 0),
-        'total_commission': round_trip_details.get('total_commission', 0),
-        'old_total': 0,
-        'price_increase': 0
-    }
-    
-    # Calcul des coûts par segment
-    segments = round_trip_details.get('segments', [])
-    for segment in segments:
-        if segment['type'] == 'outbound':
-            financial_summary['outbound_cost'] = segment.get('cost', 0)
-            financial_summary['old_total'] = segment.get('cost', 0)
-        elif segment['type'] == 'return':
-            financial_summary['return_cost'] = segment.get('cost', 0)
-    
-    financial_summary['price_increase'] = (
-        financial_summary['total_cost'] - financial_summary['old_total']
-    )
-    
-    # Context unifié pour tous les templates
-    unified_context = {
-        "round_trip_details": round_trip_details,
-        "business_info": business_info,
-        "booking_creator": booking_creator,
-        "pdf_url": pdf_url,
-        "financial_summary": financial_summary,
-        "transformation_type": "simple_to_round_trip",
-    }
-    
-    return unified_context, booking
-
-def send_round_trip_client_email(context, booking):
-    """Envoie l'email au client pour transformation aller-retour"""
-    if not booking.client or not booking.client.email:
-        return
-    
-    try:
-        client_email = booking.client.email
-        client_name = booking.client.get_full_name()
-        
-        # Context spécifique client
-        client_context = {
-            **context,
-            "recipient_name": client_name,
-            "recipient_role": "client",
-        }
-        
-        subject = f"Votre réservation {context['round_trip_details']['booking_number']} transformée en aller-retour"
-        
-        html_content = render_to_string("fichiers_mails/email_round_trip_transformation.html", client_context)
-        send_email(client_email, subject, html_content)
-        
-    except Exception as e:
-        print(f"Erreur envoi email client aller-retour: {str(e)}")
-
-def send_round_trip_passenger_emails(context, booking):
-    """Envoie les emails aux passagers pour transformation aller-retour"""
-    segments = context['round_trip_details'].get("segments", [])
-    emails_sent = 0
-    
-    # Récupérer tous les passagers uniques des deux segments
-    all_passengers = {}
-    for segment in segments:
-        if 'estimate' in segment and 'passengers' in segment['estimate']:
-            for passenger in segment['estimate']['passengers']:
-                all_passengers[passenger['id']] = passenger
-    
-    for passenger in all_passengers.values():
-        passenger_email = passenger.get("email")
-        if not passenger_email or passenger_email == "Non renseigné":
-            continue
-            
-        try:
-            # Context spécifique passager
-            passenger_context = {
-                **context,
-                "recipient_name": passenger["name"],
-                "recipient_role": "passenger",
-                "recipient_is_main": passenger.get("is_main_client", False),
-            }
-            
-            if passenger.get("is_main_client"):
-                subject = f"Votre réservation {context['round_trip_details']['booking_number']} transformée en aller-retour"
-            else:
-                subject = f"Mise à jour - Réservation {context['round_trip_details']['booking_number']} transformée en aller-retour"
-            
-            html_content = render_to_string("fichiers_mails/email_round_trip_transformation.html", passenger_context)
-            send_email(passenger_email, subject, html_content)
-            emails_sent += 1
-            
-        except Exception as e:
-            print(f"Erreur lors de l'envoi de l'email à {passenger_email}: {str(e)}")
-    
-    if emails_sent == 0:
-        print("Transformation aller-retour : Aucun passager avec email")
-
-def send_round_trip_manager_email(context):
-    """Envoie l'email au manager pour transformation aller-retour"""
-    try:
-        business = Business.objects.filter(business_type="my_business").first()
-        manager_email = None
-        
-        if business:
-            if business.main_user:
-                if business.main_user.role == "manager" and business.main_user.email:
-                    manager_email = business.main_user.email
-                elif business.main_user.email:
-                    manager_email = business.main_user.email
-            
-            if not manager_email and business.email:
-                manager_email = business.email
-        
-        if not manager_email:
-            manager_admin = Administrator.objects.filter(
-                role="manager", 
-                email__isnull=False
-            ).exclude(email='').first()
-            
-            if manager_admin:
-                manager_email = manager_admin.email
-        
-        if not manager_email:
-            any_admin = Administrator.objects.filter(
-                email__isnull=False
-            ).exclude(email='').first()
-            
-            if any_admin:
-                manager_email = any_admin.email
-        
-        if not manager_email:
-            return
-        
-        subject = f"Transformation aller-retour - {context['round_trip_details']['booking_number']}"
-        html_content = render_to_string("fichiers_mails/email_round_trip_transformation_admin.html", context)
-        send_email(manager_email, subject, html_content)
-            
-    except Exception as e:
-        print(f"Erreur envoi email manager aller-retour: {str(e)}")
-
-def send_round_trip_unified_emails(booking_id):
-    """Envoi unifié des emails pour transformation aller-retour"""
-    try:
-        unified_context, booking = get_round_trip_unified_context(booking_id)
-        
-        # Email manager (toujours envoyé)
-        try:
-            send_round_trip_manager_email(unified_context)
-        except Exception as manager_error:
-            pass  # Ne pas faire échouer tout le processus
-        
-        # Emails selon le type de réservation
-        if booking.client is None:
-            # Réservation admin - emails aux passagers
-            try:
-                send_round_trip_passenger_emails(unified_context, booking)
-            except Exception as passenger_error:
-                pass
-        else:
-            # Réservation client - email au client
-            try:
-                send_round_trip_client_email(unified_context, booking)
-            except Exception as client_error:
-                pass
-        
-    except Exception as e:
-        print(f"Erreur globale envoi emails aller-retour: {str(e)}")
-
-def send_round_trip_notifications(booking_id):
-    """Envoie les notifications pour transformation aller-retour"""
-    try:        
-        booking = Booking.objects.get(id=booking_id)
-        NotificationService.create_round_trip_notification(booking)
-        
-    except Exception as e:
-        print(f"Erreur notifications aller-retour: {e}")
-
-def send_round_trip_emails_with_notifications(booking_id):
-    """Point d'entrée principal pour emails + notifications aller-retour"""
-    try:
-        # 1. Envoi des emails
-        send_round_trip_unified_emails(booking_id)
-        
-        # 2. Envoi des notifications
-        send_round_trip_notifications(booking_id)
-        
-        return True, "Emails et notifications envoyés avec succès"
-        
-    except Exception as e:
-        error_msg = f"Erreur envoi emails/notifications aller-retour: {e}"
-        print(error_msg)
-        return False, error_msg
-
 def get_booking_creator_info(booking):
     """Retourne les infos sur qui a créé la réservation"""
     if booking.client is None:
@@ -1081,9 +906,7 @@ def create_transformation_log_safe(booking, user, return_data):
         print(f"❌ Erreur création log transformation: {e}")
         return False
 
-
-
-# ============== FONCTIONS UTILITAIRES DE BASE ==============
+# ============== FONCTIONS UTILITAIRES DE BASE DUPLICATION ==============
 
 def validate_booking_for_duplication(booking_id):
     """Valide qu'un booking peut être dupliqué"""
@@ -1109,22 +932,30 @@ def calculate_attributes_cost(attributes_data):
         if Attribute.objects.filter(id=attr['attribute']).exists()
     )
 
-# ============== EXTRACTEURS DE TEMPLATE ==============
+# ============== EXTRACTEURS DE TEMPLATE OPTIMISÉS ==============
 
 class BookingTemplateExtractor:
     """Extracteur unifié pour les templates de duplication"""
     
     @staticmethod
     def extract_estimate_base_data(estimate, suggested_date):
-        """Extrait les données de base d'un estimate"""
+        """Extrait les données de base d'un estimate avec calculs automatiques"""
         estimation_log = estimate.estimation_log
+        
+        # ✅ CALCUL AUTOMATIQUE des métriques pour la nouvelle date/trajet
+        metrics = calculate_trip_metrics(
+            estimation_log.departure,
+            estimation_log.destination,
+            estimation_log.waypoints or []
+        )
+        
         return {
             'pickup_date': suggested_date.isoformat(),
             'departure': estimation_log.departure,
             'destination': estimation_log.destination,
             'waypoints': estimation_log.waypoints or [],
-            'distance_travelled': estimation_log.distance_travelled,
-            'duration_travelled': estimation_log.duration_travelled,
+            'distance_travelled': metrics["distance_travelled"],     # ✅ AUTOMATIQUE
+            'duration_travelled': metrics["duration_travelled"],     # ✅ AUTOMATIQUE
             'estimate_type': estimation_log.estimate_type,
             'vehicle_id': estimate.user_choice.vehicle_id if estimate.user_choice else None,
             'payment_method_id': estimate.payment_method.id if estimate.payment_method else None,
@@ -1138,13 +969,13 @@ class BookingTemplateExtractor:
     
     @staticmethod
     def extract_booking_base_data(booking):
-        """Extrait les données de base d'un booking"""
+        """✅ CORRIGÉ : Extrait les données de base d'un booking avec structure passagers"""
         return {
             'compensation': booking.compensation or 0,
             'commission': booking.commission or 0,
             'assigned_driver_id': None,
             'assigned_partner_id': None,
-            'passengers': [],
+            'passengers': {'existing': [], 'new': []},  # ✅ Structure corrigée
             'estimate_attributes': [],
             'message': ''
         }
@@ -1156,12 +987,12 @@ class BookingTemplateExtractor:
         return pickup_date + timedelta(days=days_offset)
 
 def extract_booking_template_data(source_booking):
-    """Point d'entrée unifié pour extraction de template"""
+    """Point d'entrée unifié pour extraction de template avec client original"""
     extractor = BookingTemplateExtractor()
     
     base_data = {
         'booking_type': source_booking.booking_type,
-        'client_id': None,  # Force à choisir
+        'client_id': source_booking.client.id if source_booking.client else None,  # ✅ CLIENT ORIGINAL
         **extractor.extract_booking_base_data(source_booking)
     }
     
@@ -1217,7 +1048,7 @@ def generate_duplicate_preview(booking_id):
         },
         'modification_options': {
             'all_fields_modifiable': True,
-            'requires_client_selection': True,
+            'requires_client_selection': False,  # ✅ CLIENT PRÉSELECTIONNÉ
             'attributes_empty_by_default': True,
             'pricing_recalculated_automatically': True
         }
@@ -1249,26 +1080,33 @@ def duplicate_booking_unified(source_booking_id, modifications, user):
             'estimates_created': estimates_created,
             'duplication_successful': True
         }
-        
 
-# ============== CRÉATEURS D'OBJETS UNIFIÉS ==============
+# ============== CRÉATEURS D'OBJETS UNIFIÉS OPTIMISÉS ==============
+
 
 class EstimateCreator:
-    """Créateur unifié pour les estimates de duplication"""
+    """Créateur unifié pour les estimates de duplication avec calculs automatiques"""
     
     @staticmethod
     def create_estimation_log(template_data, modifications, source_user):
-        """Crée un EstimationLog"""
+        """✅ SIMPLIFIÉ : Crée juste un EstimationLog, pas de tariff"""
+        departure = modifications.get('departure', template_data['departure'])
+        destination = modifications.get('destination', template_data['destination'])
+        waypoints = modifications.get('waypoints', template_data.get('waypoints', []))
+        
+        # ✅ CALCUL AUTOMATIQUE des métriques
+        metrics = calculate_trip_metrics(departure, destination, waypoints)
+        
         return EstimationLog.objects.create(
-            departure=modifications.get('departure', template_data['departure']),
-            destination=modifications.get('destination', template_data['destination']),
+            departure=departure,
+            destination=destination,
             pickup_date=modifications.get('pickup_date', template_data['pickup_date']),
-            waypoints=modifications.get('waypoints', template_data.get('waypoints', [])),
+            waypoints=waypoints,
             estimate_type=template_data.get('estimate_type', 'simple_transfer'),
             user=source_user,
             is_booked=True,
-            distance_travelled=modifications.get('distance_travelled', template_data.get('distance_travelled', 0)),
-            duration_travelled=modifications.get('duration_travelled', template_data.get('duration_travelled', '0h0min'))
+            distance_travelled=metrics["distance_travelled"],  # ✅ AUTOMATIQUE
+            duration_travelled=metrics["duration_travelled"]   # ✅ AUTOMATIQUE
         )
     
     @staticmethod
@@ -1310,7 +1148,7 @@ class EstimateCreator:
     
     @staticmethod
     def create_estimate_with_relations(template_data, modifications, source_estimate):
-        """Crée un estimate complet avec toutes ses relations"""
+        """✅ SIMPLIFIÉ : Crée un estimate sans EstimationTariff"""
         creator = EstimateCreator()
         
         # 1. Objets de base
@@ -1319,12 +1157,12 @@ class EstimateCreator:
         payment_method = creator.get_payment_method(modifications, template_data, source_estimate)
         meeting_place = creator.get_meeting_place(template_data, source_estimate)
         
-        # 2. Calcul des coûts
-        base_cost = modifications.get('total_booking_cost', template_data.get('total_booking_cost', 0))
-        attributes_cost = calculate_attributes_cost(modifications.get('estimate_attributes', []))
+        # 2. ✅ CALCUL DIRECT des coûts (comme tu l'as suggéré)
+        base_cost = float(modifications.get('total_booking_cost', template_data.get('total_booking_cost', 0)))
+        attributes_cost = float(calculate_attributes_cost(modifications.get('estimate_attributes', [])))
         total_cost = base_cost + attributes_cost
         
-        # 3. Créer l'estimate
+        # 3. Créer l'estimate avec les coûts directs
         estimate = Estimate.objects.create(
             estimation_log=estimation_log,
             user_choice=user_choice,
@@ -1332,8 +1170,8 @@ class EstimateCreator:
             payment_method=payment_method,
             flight_number=modifications.get('flight_number', template_data.get('flight_number', '')),
             message=modifications.get('message', template_data.get('message', '')),
-            total_booking_cost=total_cost,
-            total_attributes_cost=attributes_cost,
+            total_booking_cost=total_cost,  # ✅ COÛT TOTAL DIRECT
+            total_attributes_cost=attributes_cost,  # ✅ COÛT ATTRIBUTS CALCULÉ
             number_of_luggages=modifications.get('number_of_luggages', template_data.get('number_of_luggages')),
             number_of_passengers=modifications.get('number_of_passengers', template_data.get('number_of_passengers')),
             case_number=modifications.get('case_number', template_data.get('case_number')),
@@ -1341,23 +1179,52 @@ class EstimateCreator:
         )
         
         # 4. Relations
-        creator.create_passengers(estimate, modifications.get('passengers', []), modifications.get('client_id'))
+        creator.create_passengers(estimate, modifications.get('passengers', {}), modifications.get('client_id'))
         creator.create_attributes(estimate, modifications.get('estimate_attributes', []))
+        
+        print(f"✅ Estimate créé: ID {estimate.id}, Total: {total_cost}€ (base: {base_cost}€ + attributs: {attributes_cost}€)")
         
         return estimate
     
     @staticmethod
     def create_passengers(estimate, passengers_data, client_id):
-        """Crée et associe les passagers"""
-        for passenger_data in passengers_data:
-            passenger = Passenger.objects.create(
-                name=passenger_data['name'],
-                phone_number=passenger_data['phone_number'],
-                email=passenger_data.get('email', ''),
-                is_main_client=passenger_data.get('is_main_client', False),
-                client_id=client_id
-            )
-            estimate.passengers.add(passenger)
+        """Crée et associe les passagers selon la structure existing/new"""
+        if not passengers_data:
+            return
+        
+        # Gestion des passagers existants
+        existing_ids = passengers_data.get('existing', [])
+        for passenger_id in existing_ids:
+            try:
+                passenger = Passenger.objects.get(id=passenger_id)
+                estimate.passengers.add(passenger)
+                print(f"✅ Passager existant associé: {passenger.name}")
+            except Passenger.DoesNotExist:
+                print(f"⚠️ Passager existant {passenger_id} non trouvé, ignoré")
+                continue
+        
+        # Gestion des nouveaux passagers
+        new_passengers = passengers_data.get('new', [])
+        for passenger_data in new_passengers:
+            try:
+                # Nettoyer l'email
+                email = passenger_data.get('email', '').strip()
+                if not email:
+                    email = None
+                
+                passenger = Passenger.objects.create(
+                    name=passenger_data['name'],
+                    phone_number=passenger_data['phone_number'],
+                    email=email,
+                    is_main_client=passenger_data.get('is_main_client', False),
+                    client_id=client_id
+                )
+                estimate.passengers.add(passenger)
+                print(f"✅ Nouveau passager créé: {passenger.name}")
+                
+            except Exception as e:
+                print(f"⚠️ Erreur création passager {passenger_data.get('name', 'Inconnu')}: {e}")
+                continue
     
     @staticmethod
     def create_attributes(estimate, attributes_data):
@@ -1372,9 +1239,11 @@ class EstimateCreator:
                     quantity=attr_data['quantity']
                 )
                 estimate.estimate_attribute.add(estimate_attr)
+                print(f"✅ Attribut créé: {attribute.attribute_name} x{attr_data['quantity']}")
             except Attribute.DoesNotExist:
+                print(f"⚠️ Attribut {attr_data['attribute']} non trouvé, ignoré")
                 continue
-
+                 
 # ============== DUPLICATEURS SPÉCIALISÉS ==============
 
 class BookingDuplicator:
@@ -1399,7 +1268,7 @@ class BookingDuplicator:
     
     @staticmethod
     def duplicate_one_way(source_booking, modifications, user):
-        """Duplique un booking one_way"""
+        """Duplique un booking one_way avec calculs automatiques"""
         template_data = extract_booking_template_data(source_booking)
         new_estimate = EstimateCreator.create_estimate_with_relations(template_data, modifications, source_booking.estimate)
         
@@ -1424,7 +1293,7 @@ class BookingDuplicator:
     
     @staticmethod
     def duplicate_round_trip(source_booking, modifications, user):
-        """Duplique un booking round_trip"""
+        """Duplique un booking round_trip avec calculs automatiques"""
         # Préparation des modifications par segment
         shared_mods = modifications.get('shared_modifications', {})
         outbound_mods = {**shared_mods, **modifications.get('outbound_modifications', {}), 'client_id': modifications['client_id']}
@@ -1523,3 +1392,194 @@ class BookingDuplicator:
             
         except Exception as e:
             print(f"❌ Erreur log duplication: {e}")
+            
+
+def format_duplication_booking_data(booking, include_request_data=True):
+    """
+    Formate les données de booking pour la duplication
+    Version complète avec toutes les données nécessaires pour les emails
+    """
+    
+    # Pour round_trip, utiliser la fonction dédiée
+    if booking.booking_type == 'round_trip':
+        return format_round_trip_booking_data(booking, include_request_data)
+    
+    # Pour one_way, construire les données complètes
+    display_data = {}
+    
+    # ✅ Champs directs du booking
+    display_data.update({
+        'id': booking.id,
+        'booking_number': booking.booking_number,
+        'booking_type': booking.booking_type,
+        'status': booking.status,
+        'status_display': booking.get_status_display(),
+        'created_at': booking.created_at.isoformat() if booking.created_at else None,
+        'compensation': booking.compensation or 0,
+        'commission': booking.commission or 0,
+        'driver_sale_price': booking.driver_sale_price or 0,
+        'partner_sale_price': booking.partner_sale_price or 0,
+    })
+
+    # ✅ Informations client
+    if booking.client:
+        display_data["user"] = {
+            "name": booking.client.get_full_name(),
+            "email": booking.client.email,
+            "first_name": booking.client.first_name,
+            "last_name": booking.client.last_name,
+            "phone_number": booking.client.phone_number,
+            "client_type": booking.client.get_client_type_display() if hasattr(booking.client, 'get_client_type_display') else "Client",
+            "user_type": "Client"
+        }
+    else:
+        # Réservation admin
+        admin_user = None
+        if booking.estimate and booking.estimate.estimation_log:
+            admin_user = booking.estimate.estimation_log.user
+        
+        display_data["user"] = {
+            "name": admin_user.get_full_name() if admin_user else "Admin inconnu",
+            "email": admin_user.email if admin_user else "",
+            "first_name": admin_user.first_name if admin_user else "",
+            "last_name": admin_user.last_name if admin_user else "",
+            "phone_number": admin_user.phone_number if admin_user else "",
+            "client_type": "Réservation Administrateur",
+            "user_type": "Administrateur"
+        }
+    
+    # ✅ Données de l'estimate
+    if booking.estimate:
+        estimate = booking.estimate
+        display_data.update({
+            'total_booking_cost': estimate.total_booking_cost or 0,
+            'total_attributes_cost': estimate.total_attributes_cost or 0,
+            'flight_number': estimate.flight_number or '',
+            'message': estimate.message or '',
+            'number_of_luggages': estimate.number_of_luggages,
+            'number_of_passengers': estimate.number_of_passengers,
+            'case_number': estimate.case_number,
+            'is_payment_pending': estimate.is_payment_pending
+        })
+        
+        # ✅ Calcul du total trajet (coût total - attributs)
+        total_trajet = (estimate.total_booking_cost or 0) - (estimate.total_attributes_cost or 0)
+        display_data['total_trajet'] = max(total_trajet, 0)
+        
+        # ✅ Données du trajet depuis estimation_log
+        if estimate.estimation_log:
+            estimation_log = estimate.estimation_log
+            display_data["estimation_log"] = {
+                "id": estimation_log.id,
+                "departure": estimation_log.departure,
+                "destination": estimation_log.destination,
+                "pickup_date": estimation_log.pickup_date.isoformat() if estimation_log.pickup_date else None,
+                "waypoints": estimation_log.waypoints or [],
+                "estimate_type": estimation_log.estimate_type,
+                "estimate_type_display": estimation_log.get_estimate_type_display() if hasattr(estimation_log, 'get_estimate_type_display') else estimation_log.estimate_type,
+                "distance_travelled": estimation_log.distance_travelled,
+                "duration_travelled": estimation_log.duration_travelled,
+                "is_booked": estimation_log.is_booked,
+                "created_at": estimation_log.created_at.isoformat() if estimation_log.created_at else None
+            }
+
+        # ✅ Passagers
+        if estimate.passengers.exists():
+            display_data["passengers"] = [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "phone_number": p.phone_number,
+                    "email": p.email or "Non renseigné",
+                    "is_main_client": p.is_main_client,
+                    "created_at": p.created_at.isoformat() if p.created_at else None
+                }
+                for p in estimate.passengers.all()
+            ]
+        else:
+            display_data["passengers"] = []
+
+        # ✅ Attributs
+        if estimate.estimate_attribute.exists():
+            display_data["estimate_attribute"] = [
+                {
+                    "id": a.id,
+                    "attribute_name": a.attribute.attribute_name,
+                    "unit_price": float(a.attribute.unit_price),
+                    "quantity": a.quantity,
+                    "total": float(a.total)
+                }
+                for a in estimate.estimate_attribute.all()
+            ]
+        else:
+            display_data["estimate_attribute"] = []
+
+        # ✅ Véhicule
+        if estimate.user_choice and estimate.user_choice.vehicle_id:
+            try:
+                from configurations.models import Vehicle
+                vehicle = Vehicle.objects.get(id=estimate.user_choice.vehicle_id)
+                display_data["vehicle"] = {
+                    "id": vehicle.id,
+                    "brand": vehicle.brand,
+                    "model": vehicle.model,
+                    "vehicle_type": vehicle.vehicle_type.name if vehicle.vehicle_type else "Non défini"
+                }
+            except Vehicle.DoesNotExist:
+                display_data["vehicle"] = {
+                    "brand": "Véhicule",
+                    "model": "non trouvé",
+                    "vehicle_type": "Inconnu"
+                }
+        else:
+            display_data["vehicle"] = {
+                "brand": "Non",
+                "model": "défini",
+                "vehicle_type": "Inconnu"
+            }
+
+        # ✅ Lieu de rendez-vous
+        if estimate.meeting_place:
+            try:
+                display_data["meeting_place"] = {
+                    "name": estimate.meeting_place.name if hasattr(estimate.meeting_place, 'name') else str(estimate.meeting_place),
+                    "address": getattr(estimate.meeting_place, 'address', '')
+                }
+            except:
+                display_data["meeting_place"] = "Lieu de rendez-vous défini"
+        else:
+            display_data["meeting_place"] = "Aucun lieu de rendez-vous spécifié"
+
+        # ✅ Méthode de paiement
+        if estimate.payment_method:
+            display_data["payment_method"] = {
+                "id": estimate.payment_method.id,
+                "name": estimate.payment_method.name,
+                "description": getattr(estimate.payment_method, 'description', '')
+            }
+        else:
+            display_data["payment_method"] = None
+
+    else:
+        # Fallback si pas d'estimate
+        display_data.update({
+            'total_booking_cost': 0,
+            'total_attributes_cost': 0,
+            'total_trajet': 0,
+            'passengers': [],
+            'estimate_attribute': [],
+            'estimation_log': {},
+            'vehicle': {"brand": "Non", "model": "défini", "vehicle_type": "Inconnu"},
+            'meeting_place': "Aucun lieu de rendez-vous spécifié",
+            'payment_method': None
+        })
+
+    result = {"display_data": display_data}
+    if include_request_data:
+        request_data = {
+            "booking_id": booking.id,
+            "client_id": booking.client.id if booking.client else None
+        }
+        result["request_data"] = request_data
+    
+    return result
