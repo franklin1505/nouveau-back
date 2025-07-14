@@ -1,11 +1,17 @@
 from django.urls import path
 
-from utilisateurs.Business.views import BusinessDetailUpdateView
+from utilisateurs.Business.views import BusinessDetailUpdateView, BusinessListView
 
 urlpatterns = [
     path(
         "<int:id>/",
         BusinessDetailUpdateView.as_view(),
         name="business-details-and-update",
+    ),
+    
+    path(
+        "",
+        BusinessListView.as_view(),
+        name="business-list",
     ),
 ]

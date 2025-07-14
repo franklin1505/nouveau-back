@@ -125,7 +125,7 @@ class DriverUpdateView(generics.UpdateAPIView):
 
 class DriverActivationView(APIView):
     """
-    View to activate or deactivate a driver account.
+    View to activate/deactivate or validate/invalidate a driver account.
     """
     permission_classes = [IsAuthenticated]
     
@@ -139,25 +139,27 @@ class DriverActivationView(APIView):
                 http_status=status.HTTP_404_NOT_FOUND
             )
         
-        # Récupérer l'action à effectuer (activer ou désactiver)
+        # Récupérer l'action à effectuer
         action = request.data.get('action')
         
-        if action not in ['activate', 'deactivate']:
+        if action not in ['activate', 'deactivate', 'validate', 'invalidate']:
             return create_response(
                 status_type="error",
-                message="Action non valide. Utilisez 'activate' ou 'deactivate'.",
+                message="Action non valide. Utilisez 'activate', 'deactivate', 'validate' ou 'invalidate'.",
                 http_status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Vérifier si c'est une activation ou désactivation
-        is_activation = (action == 'activate')
-        
         # Mettre à jour le statut du chauffeur
-        driver.is_active = is_activation
-        driver.save()
+        if action in ['activate', 'deactivate']:
+            is_activation = (action == 'activate')
+            driver.is_active = is_activation
+            action_text = "activé" if is_activation else "désactivé"
+        else:
+            is_validation = (action == 'validate')
+            driver.is_validated = is_validation
+            action_text = "validé" if is_validation else "invalidé"
         
-        # Préparer le message de réponse
-        action_text = "activé" if is_activation else "désactivé"
+        driver.save()
         
         serializer = DriverSerializer(driver)
         return create_response(
@@ -165,8 +167,6 @@ class DriverActivationView(APIView):
             message=f"Chauffeur {action_text} avec succès",
             data=serializer.data
         )
-
-
 
 class DriverBusinessAssociationView(APIView):
     """

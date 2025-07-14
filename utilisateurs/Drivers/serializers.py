@@ -15,7 +15,7 @@ class DriverSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'first_name', 'last_name', 'email', 'phone_number',
             'address', 'user_type', 'user_type_display', 'is_independent', 
-            'years_experience', 'spoken_languages', 'business',
+            'years_experience', 'spoken_languages', 'business','is_validated',
             'business_info', 'status_display', 'is_active', 'date_added'
         ]
         read_only_fields = ['username', 'date_added', 'user_type']

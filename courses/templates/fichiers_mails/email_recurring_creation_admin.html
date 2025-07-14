@@ -1,0 +1,355 @@
+<!-- fichiers_mails/email_recurring_creation_admin.html -->
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Récurrence créée - {{ business_info.business_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }
+        .content { padding: 30px; }
+        .summary-box { background: #e8f5e8; border-left: 4px solid #27ae60; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        .warning-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        .total-box { background: #e3f2fd; border: 1px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 6px; text-align: center; }
+        .footer { background: #ecf0f1; padding: 15px; text-align: center; color: #7f8c8d; font-size: 12px; }
+        .btn { display: inline-block; background: #3498db; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
+        .btn:hover { background: #2980b9; }
+        .label { font-weight: bold; color: #34495e; }
+        .value { color: #2c3e50; }
+        
+        /* Styles pour les détails des bookings */
+        .booking-details-section { margin: 30px 0; }
+        .booking-card { 
+            background: #f8f9fa; 
+            border: 1px solid #dee2e6; 
+            border-radius: 8px; 
+            margin: 15px 0; 
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .booking-card-header { 
+            background: #e9ecef; 
+            padding: 15px; 
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .booking-number { font-weight: bold; color: #2c3e50; font-size: 16px; }
+        .booking-type-badge { 
+            background: #28a745; 
+            color: white; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .modified-badge { background: #ffc107; color: #000; }
+        
+        .booking-card-body { padding: 20px; }
+        .info-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 15px; 
+            margin-bottom: 15px;
+        }
+        .info-item { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 8px 0; 
+            border-bottom: 1px solid #f1f1f1;
+        }
+        .info-label { font-weight: bold; color: #495057; }
+        .info-value { color: #212529; }
+        
+        .trip-section { 
+            background: #fff; 
+            border: 1px solid #e3f2fd; 
+            border-radius: 6px; 
+            padding: 15px; 
+            margin: 15px 0;
+        }
+        .trip-title { font-weight: bold; color: #1976d2; margin-bottom: 10px; }
+        .route { 
+            display: flex; 
+            align-items: center; 
+            font-size: 14px; 
+            margin: 5px 0;
+        }
+        .route-arrow { margin: 0 10px; color: #6c757d; }
+        
+        .passengers-section {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .passenger-item {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .passenger-main { font-weight: bold; color: #28a745; }
+        
+        .cost-breakdown {
+            background: #e8f5e8;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .cost-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        .cost-total {
+            font-weight: bold;
+            font-size: 16px;
+            border-top: 2px solid #27ae60;
+            padding-top: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔄 Récurrence créée avec succès</h1>
+            <p>{{ business_info.business_name|default:"Transport" }}</p>
+        </div>
+        
+        <div class="content">
+            <!-- Résumé -->
+            <div class="summary-box">
+                <h2>📋 Résumé de la récurrence</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Template ID:</span>
+                        <span class="info-value">#{{ template_id|default:"N/A" }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Booking source:</span>
+                        <span class="info-value">{{ base_booking|default:"N/A" }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Créé par:</span>
+                        <span class="info-value">{{ created_by|default:"Admin" }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Courses générées:</span>
+                        <span class="info-value">{{ total_bookings|default:"0" }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Client:</span>
+                        <span class="info-value">{{ client_name|default:"Client inconnu" }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Véhicule:</span>
+                        <span class="info-value">{{ vehicle_info|default:"N/A" }}</span>
+                    </div>
+                </div>
+            </div>
+
+            {% if has_modifications %}
+            <div class="warning-box">
+                <h3>⚠️ Modifications appliquées</h3>
+                <p>Certaines occurrences ont été créées avec des modifications par rapport au booking source.</p>
+            </div>
+            {% endif %}
+
+            <!-- Total -->
+            <div class="total-box">
+                <h2>💰 Total récurrence</h2>
+                <h1 style="margin: 10px 0; color: #27ae60;">{{ total_cost|default:"0" }}€</h1>
+                <p>Répartis sur {{ total_bookings|default:"0" }} course(s)</p>
+            </div>
+
+            <!-- Détails complets des bookings créés -->
+            {% if detailed_bookings %}
+            <div class="booking-details-section">
+                <h2>🚗 Détails complets des courses créées</h2>
+                
+                {% for booking in detailed_bookings %}
+                <div class="booking-card">
+                    <div class="booking-card-header">
+                        <div class="booking-number">{{ booking.booking_number|default:"N/A" }}</div>
+                        <div>
+                            {% if booking.recurring_info.type == 'modified' %}
+                            <span class="booking-type-badge modified-badge">Modifié</span>
+                            {% else %}
+                            <span class="booking-type-badge">Standard</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="booking-card-body">
+                        <!-- Informations générales -->
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Date pickup:</span>
+                                <span class="info-value">{{ booking.estimation_log.pickup_date|default:"N/A" }}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Statut:</span>
+                                <span class="info-value">{{ booking.status_display|default:"N/A" }}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Nb passagers:</span>
+                                <span class="info-value">{{ booking.number_of_passengers|default:"N/A" }}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Bagages:</span>
+                                <span class="info-value">{{ booking.number_of_luggages|default:"N/A" }}</span>
+                            </div>
+                            {% if booking.flight_number %}
+                            <div class="info-item">
+                                <span class="info-label">Vol:</span>
+                                <span class="info-value">{{ booking.flight_number }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Trajet -->
+                        <div class="trip-section">
+                            <div class="trip-title">📍 Itinéraire</div>
+                            <div class="route">
+                                <strong>{{ booking.estimation_log.departure|default:"N/A" }}</strong>
+                                <span class="route-arrow">→</span>
+                                <strong>{{ booking.estimation_log.destination|default:"N/A" }}</strong>
+                            </div>
+                            {% if booking.estimation_log.waypoints %}
+                            <div style="margin-top: 10px; font-size: 12px; color: #6c757d;">
+                                <strong>Étapes:</strong> 
+                                {% for waypoint in booking.estimation_log.waypoints %}
+                                    {{ waypoint }}{% if not forloop.last %}, {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            <div style="margin-top: 10px; font-size: 12px;">
+                                <span class="info-label">Distance:</span> {{ booking.estimation_log.distance_travelled|default:"N/A" }} km
+                                | <span class="info-label">Durée:</span> {{ booking.estimation_log.duration_travelled|default:"N/A" }}
+                            </div>
+                        </div>
+
+                        <!-- Passagers -->
+                        {% if booking.passengers %}
+                        <div class="passengers-section">
+                            <div class="trip-title">👥 Passagers</div>
+                            {% for passenger in booking.passengers %}
+                            <div class="passenger-item">
+                                <div>
+                                    <span {% if passenger.is_main_client %}class="passenger-main"{% endif %}>
+                                        {{ passenger.name|default:"N/A" }}
+                                    </span>
+                                    {% if passenger.is_main_client %}<small>(Client principal)</small>{% endif %}
+                                </div>
+                                <div style="font-size: 12px; color: #6c757d;">
+                                    {{ passenger.phone_number|default:"N/A" }}
+                                    {% if passenger.email %} | {{ passenger.email }}{% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Véhicule et paiement -->
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Véhicule:</span>
+                                <span class="info-value">{{ booking.vehicle.brand|default:"N/A" }} {{ booking.vehicle.model|default:"" }}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Paiement:</span>
+                                <span class="info-value">{{ booking.payment_method.name|default:"N/A" }}</span>
+                            </div>
+                            {% if booking.meeting_place %}
+                            <div class="info-item">
+                                <span class="info-label">Lieu RDV:</span>
+                                <span class="info-value">{{ booking.meeting_place.name }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Coûts -->
+                        <div class="cost-breakdown">
+                            <div class="trip-title">💰 Détail des coûts</div>
+                            <div class="cost-item">
+                                <span>Coût de base:</span>
+                                <span>{{ booking.total_booking_cost|default:"0" }}€</span>
+                            </div>
+                            {% if booking.total_attributes_cost and booking.total_attributes_cost > 0 %}
+                            <div class="cost-item">
+                                <span>Attributs:</span>
+                                <span>{{ booking.total_attributes_cost }}€</span>
+                            </div>
+                            {% endif %}
+                            {% if booking.compensation and booking.compensation > 0 %}
+                            <div class="cost-item">
+                                <span>Compensation:</span>
+                                <span style="color: #dc3545;">+{{ booking.compensation }}€</span>
+                            </div>
+                            {% endif %}
+                            {% if booking.commission and booking.commission > 0 %}
+                            <div class="cost-item">
+                                <span>Commission:</span>
+                                <span style="color: #dc3545;">{{ booking.commission }}%</span>
+                            </div>
+                            {% endif %}
+                            <div class="cost-item cost-total">
+                                <span>Total:</span>
+                                <span>{{ booking.total_booking_cost|default:"0" }}€</span>
+                            </div>
+                        </div>
+
+                        <!-- Modifications appliquées -->
+                        {% if booking.recurring_info.modifications_applied %}
+                        <div class="warning-box" style="margin: 15px 0;">
+                            <strong>Modifications appliquées:</strong>
+                            {% for modification in booking.recurring_info.modifications_applied %}
+                                <span style="background: #ffc107; padding: 2px 6px; border-radius: 3px; margin: 2px; display: inline-block; font-size: 12px;">{{ modification }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Message -->
+                        {% if booking.message %}
+                        <div style="background: #e3f2fd; padding: 10px; border-radius: 4px; margin-top: 15px;">
+                            <strong>Message:</strong> {{ booking.message }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="warning-box">
+                <h3>⚠️ Détails non disponibles</h3>
+                <p>Les détails complets des courses ne sont pas disponibles dans cet email.</p>
+            </div>
+            {% endif %}
+
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{ business_info.operator_url|default:"#" }}/admin/bookings/" class="btn">
+                    🚗 Voir tous les bookings
+                </a>
+                <a href="{{ business_info.operator_url|default:"#" }}/admin/recurring-templates/" class="btn">
+                    🔄 Gérer les récurrences
+                </a>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Email automatique généré par {{ business_info.business_name|default:"Transport" }}</p>
+            <p>{{ business_info.address|default:"" }}{% if business_info.phone_number %} - {{ business_info.phone_number }}{% endif %}</p>
+        </div>
+    </div>
+</body>
+</html>

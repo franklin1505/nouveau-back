@@ -790,3 +790,153 @@ Réutilisation de **configurations éprouvées** et **standards établis**
 ---
 
 **En résumé : Prendre une course qui marche, changer ce qui diffère, créer du neuf ! 🚀**
+
+
+## 🎯 Récapitulatif complet de la fonctionnalité : booking récurrentes  
+
+### **Objectif**
+Permettre la création de bookings récurrents à partir d'un booking existant pour éviter la saisie répétitive de courses similaires.
+
+### **Workflow global validé**
+
+```
+1. 📋 Sélection du booking de base (template)
+2. 🔄 Choix du type de récurrence + paramètres
+3. 👁️ Preview détaillée avec bookings complets
+4. ✏️ Modifications individuelles possibles
+5. ✅ Validation et création en masse
+```
+
+### **Types de récurrence supportés**
+
+#### **1. Quotidienne**
+- **Défaut** : `max_occurrences = 1` → Mardi à Vendredi (même semaine)
+- **Paramétré** : X occurrences consécutives (Lun-Ven) à partir de la date choisie
+
+#### **2. Hebdomadaire**
+- Répétition du même jour chaque semaine
+- Exemple : Tous les lundis pendant 8 semaines
+
+#### **3. Mensuelle** 
+- **Option A** : Même date (7 de chaque mois)
+- **Option B** : Même position (1er lundi de chaque mois)
+
+#### **4. Annuelle**
+- Même date chaque année (ex: 07/07/2026, 07/07/2027)
+
+#### **5. Personnalisée**
+- Configuration libre : jours, fréquences, intervalles
+
+### **Preview détaillée (CORRIGÉE)**
+
+Pour chaque occurrence, le manager voit **le booking complet** qui sera créé :
+
+```json
+{
+  "occurrence_1": {
+    "scheduled_date": "2025-07-14",
+    "scheduled_time": "09:00",
+    "booking_preview": {
+      // 🔥 BOOKING COMPLET avec toutes les données
+      "departure": "Lyon Part-Dieu",
+      "destination": "Paris Gare du Nord", 
+      "pickup_datetime": "2025-07-14T09:00:00",
+      "client": {...},
+      "passengers": [...],
+      "vehicle_selected": {...},
+      "total_booking_cost": 150.0,
+      "total_attributes_cost": 25.0,
+      "payment_method": {...},
+      "meeting_place": {...},
+      "flight_number": "AF1234",
+      "message": "Transport executives",
+      "estimate_details": {...},
+      "status": "pending"
+      // + TOUTES les autres données du booking
+    }
+  },
+  "occurrence_2": { ... },
+  // ...
+}
+```
+
+### **Flexibilité de modification**
+
+Le manager peut modifier **CHAQUE occurrence individuellement** :
+- ✏️ Date/heure
+- 💰 Tarifs (coût booking, attributs, commission, compensation)
+- 👥 Passagers
+- 🚗 Véhicule
+- 🎯 Attributs supplémentaires
+- 📍 Lieux de rendez-vous
+- 💳 Mode de paiement
+- ✈️ Numéro de vol
+- 📝 Messages
+- 📊 Statut
+- ❌ Suppression de l'occurrence
+
+### **Contraintes validées**
+- 📅 Limite : 1 an maximum
+- 🎯 Statut par défaut : "pending"
+- 🕐 Heure par défaut : celle du booking de base
+- 🚫 Pas de détection automatique de conflits
+- 🧠 Manager responsable de ses choix
+
+### **Données techniques**
+
+#### **Structure template**
+```python
+{
+  "base_booking_id": 123,
+  "recurrence_type": "weekly",
+  "start_date": "2025-07-14", 
+  "end_date": "2025-09-14",    # optionnel
+  "max_occurrences": 8,        # optionnel
+  "config": {
+    "frequency_interval": 1,   # toutes les X semaines
+    "days_of_week": [1],       # lundi
+    "monthly_type": "same_date" # pour mensuel
+  }
+}
+```
+
+#### **Structure occurrence**
+```python
+{
+  "occurrence_number": 1,
+  "scheduled_datetime": "2025-07-14T09:00:00",
+  "booking_data": { /* BOOKING COMPLET */ },
+  "is_deleted": false,
+  "custom_modifications": { /* modifications spécifiques */ }
+}
+```
+
+### **Avantages de cette logique**
+
+1. **👁️ Visibilité totale** : Manager voit exactement ce qui sera créé
+2. **🔧 Flexibilité maximale** : Modification complète de chaque booking
+3. **⚡ Performance** : Pas de requêtes lourdes de détection
+4. **🎯 Simplicité** : Logique claire et directe
+5. **🛡️ Contrôle** : Manager maître de ses décisions
+
+### **Flux utilisateur final**
+
+```
+Manager → Sélectionne booking "Lyon-Paris Executive" 
+       → Choisit "Hebdomadaire, 8 semaines"
+       → Voit 8 bookings complets dans la preview
+       → Modifie occurrence #3 (changement d'heure)
+       → Supprime occurrence #6 (semaine de congés)
+       → Valide → 7 bookings créés automatiquement
+```
+
+## ✅ Validation finale
+
+Cette logique :
+- **Répond aux besoins métier** ✅
+- **Couvre tous les cas d'usage identifiés** ✅  
+- **Offre la flexibilité nécessaire** ✅
+- **Reste simple et performante** ✅
+- **Donne le contrôle total au manager** ✅
+
+**La fonctionnalité est-elle prête pour l'implémentation avec cette logique ?**

@@ -37,3 +37,17 @@ class BusinessDetailUpdateView(generics.RetrieveUpdateAPIView):
             data=serializer.data,
             http_status=status.HTTP_200_OK
         )
+        
+class BusinessListView(generics.ListAPIView):
+    queryset = Business.objects.all()
+    serializer_class = BusinessSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return create_response(
+            status_type='success',
+            message="Liste des entreprises récupérée avec succès.",
+            data=serializer.data,
+            http_status=status.HTTP_200_OK
+        )

@@ -1,6 +1,7 @@
 from django.db import models
-from datetime import datetime
+from datetime import datetime, timedelta
 from utilisateurs.models import CustomUser
+from django.core.exceptions import ValidationError
 
 class EstimateAttribute(models.Model):
     """
@@ -148,6 +149,7 @@ class UserChoice(models.Model):
 
     def __str__(self):
         return f"UserChoice {self.id} for Vehicle {self.vehicle_id}"
+
 class Estimate(models.Model):
     """
     Model for travel estimates.
@@ -534,7 +536,6 @@ class Booking(models.Model):
         
         return f"BK-{current_year_short}-{str(next_number).zfill(6)}"
 
-
 class BookingSegment(models.Model):
     """
     Modèle pour gérer les segments de voyage dans un booking aller-retour
@@ -666,6 +667,292 @@ class BookingSegment(models.Model):
     def __str__(self):
         segment_name = "Aller" if self.segment_type == 'outbound' else "Retour"
         return f"{segment_name} - {self.booking.booking_number} ({self.departure} → {self.destination})"
+
+class RecurringBookingTemplate(models.Model):
+    RECURRENCE_TYPE_CHOICES = [
+        ('daily', 'Quotidienne'),
+        ('weekly', 'Hebdomadaire'), 
+        ('monthly', 'Mensuelle'),
+        ('yearly', 'Annuelle'),
+        ('custom', 'Personnalisée')
+    ]
+    
+    base_booking = models.ForeignKey('Booking', on_delete=models.CASCADE, related_name='recurring_templates')
+    name = models.CharField(max_length=255)
+    recurrence_type = models.CharField(max_length=20, choices=RECURRENCE_TYPE_CHOICES)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    max_occurrences = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Template de récurrence"
+        verbose_name_plural = "Templates de récurrence"
+        ordering = ['-id']
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_recurrence_type_display()})"
+    
+    def clean(self):
+        super().clean()
+        if self.end_date and self.start_date >= self.end_date:
+            raise ValidationError("La date de fin doit être postérieure à la date de début")
+        if self.end_date:
+            max_end_date = self.start_date + timedelta(days=365)
+            if self.end_date > max_end_date:
+                raise ValidationError("La récurrence ne peut pas dépasser 1 an")
+
+class RecurringBookingOccurrence(models.Model):
+    template = models.ForeignKey('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='occurrences')
+    occurrence_number = models.PositiveIntegerField()
+    scheduled_datetime = models.DateTimeField()
+    booking = models.OneToOneField('Booking', on_delete=models.CASCADE, null=True, blank=True, related_name='recurring_occurrence')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Occurrence de récurrence"
+        verbose_name_plural = "Occurrences de récurrence"
+        unique_together = ['template', 'occurrence_number']
+        ordering = ['occurrence_number']
+    
+    def __str__(self):
+        status = "✓ Créé" if self.booking else "⏳ En attente"
+        return f"Occurrence #{self.occurrence_number} - {self.scheduled_datetime.strftime('%d/%m/%Y %H:%M')} ({status})"
+    
+    def clean(self):
+        super().clean()
+        if self.template_id:
+            template = self.template
+            if self.scheduled_datetime.date() < template.start_date:
+                raise ValidationError("La date de l'occurrence ne peut pas être antérieure à la date de début du template")
+            if template.end_date and self.scheduled_datetime.date() > template.end_date:
+                raise ValidationError("La date de l'occurrence ne peut pas être postérieure à la date de fin du template")
+
+class BaseRecurrenceConfiguration(models.Model):
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='base_configuration')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        abstract = True
+
+class WeekdaySelectionMixin(models.Model):
+    include_weekends = models.BooleanField(default=False)
+    weekdays = models.JSONField(default=list, blank=True)
+    
+    class Meta:
+        abstract = True
+    
+    def clean(self):
+        super().clean()
+        self._validate_weekday_selection()
+    
+    def _validate_weekday_selection(self):
+        if self.weekdays:
+            if not all(isinstance(day, int) and 1 <= day <= 7 for day in self.weekdays):
+                raise ValidationError("weekdays : liste d'entiers 1-7 (lundi=1, dimanche=7)")
+            if len(self.weekdays) > 7:
+                raise ValidationError("Maximum 7 jours de semaine")
+            if len(self.weekdays) != len(set(self.weekdays)):
+                raise ValidationError("Jours en double détectés dans weekdays")
+
+class DailyRecurrenceConfig(BaseRecurrenceConfiguration, WeekdaySelectionMixin):
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='daily_configuration')
+    
+    class Meta:
+        verbose_name = "Configuration quotidienne"
+        verbose_name_plural = "Configurations quotidiennes"
+    
+    def clean(self):
+        super().clean()
+        self._validate_daily_specific()
+    
+    def _validate_daily_specific(self):
+        effective_days = self._get_effective_weekdays()
+        includes_weekends = any(day in [6, 7] for day in effective_days)
+        
+        if includes_weekends:
+            max_limit = 365
+            period_type = "jours calendaires"
+        else:
+            max_limit = 260
+            period_type = "jours ouvrables"
+        
+        if self.template.max_occurrences > max_limit:
+            raise ValidationError(f"Maximum {max_limit} {period_type} pour récurrence quotidienne")
+    
+    def _get_effective_weekdays(self):
+        if self.weekdays:
+            return self.weekdays
+        else:
+            return [1,2,3,4,5,6,7] if self.include_weekends else [1,2,3,4,5]
+
+class WeeklyRecurrenceConfig(BaseRecurrenceConfiguration):
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='weekly_configuration')
+    frequency_interval = models.PositiveIntegerField(default=1)
+    
+    class Meta:
+        verbose_name = "Configuration hebdomadaire"
+        verbose_name_plural = "Configurations hebdomadaires"
+    
+    def clean(self):
+        super().clean()
+        self._validate_weekly_specific()
+    
+    def _validate_weekly_specific(self):
+        if self.frequency_interval < 1:
+            raise ValidationError("Minimum 1 semaine")
+        if self.template.max_occurrences > 52:
+            raise ValidationError("Maximum 52 occurrences pour récurrence hebdomadaire")
+
+class MonthlyRecurrenceConfig(BaseRecurrenceConfiguration):
+    MONTHLY_TYPE_CHOICES = [
+        ('same_date', 'Même date du mois'),
+        ('same_position', 'Même position dans le mois')
+    ]
+    
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='monthly_configuration')
+    monthly_type = models.CharField(max_length=20, choices=MONTHLY_TYPE_CHOICES, default='same_date')
+    frequency_interval = models.PositiveIntegerField(default=1)
+    
+    class Meta:
+        verbose_name = "Configuration mensuelle"
+        verbose_name_plural = "Configurations mensuelles"
+    
+    def clean(self):
+        super().clean()
+        self._validate_monthly_specific()
+    
+    def _validate_monthly_specific(self):
+        if self.frequency_interval < 1:
+            raise ValidationError("Minimum 1 mois")
+        if self.template.max_occurrences > 12:
+            raise ValidationError("Maximum 12 occurrences pour récurrence mensuelle")
+
+class YearlyRecurrenceConfig(BaseRecurrenceConfiguration):
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='yearly_configuration')
+    frequency_interval = models.PositiveIntegerField(default=1)
+    
+    class Meta:
+        verbose_name = "Configuration annuelle"
+        verbose_name_plural = "Configurations annuelles"
+    
+    def clean(self):
+        super().clean()
+        self._validate_yearly_specific()
+    
+    def _validate_yearly_specific(self):
+        if self.frequency_interval < 1:
+            raise ValidationError("Minimum 1 année")
+        if self.template.max_occurrences > 5:
+            raise ValidationError("Maximum 5 occurrences pour récurrence annuelle")
+
+class CustomRecurrenceConfig(BaseRecurrenceConfiguration, WeekdaySelectionMixin):
+    PATTERN_CHOICES = [
+        ('days_of_week', 'Jours de la semaine'),
+        ('interval_based', 'Intervalle fixe'),
+        ('specific_dates', 'Dates spécifiques')
+    ]
+    
+    template = models.OneToOneField('RecurringBookingTemplate', on_delete=models.CASCADE, related_name='custom_configuration')
+    pattern_type = models.CharField(max_length=20, choices=PATTERN_CHOICES)
+    frequency_interval = models.PositiveIntegerField(default=1)
+    interval_days = models.PositiveIntegerField(null=True, blank=True)
+    specific_dates = models.JSONField(default=list)
+    enable_multiple_times = models.BooleanField(default=False)
+    time_slots = models.JSONField(default=list)
+    enable_multiple_periods = models.BooleanField(default=False)
+    exclude_dates = models.JSONField(default=list)
+    
+    class Meta:
+        verbose_name = "Configuration personnalisée"
+        verbose_name_plural = "Configurations personnalisées"
+    
+    def clean(self):
+        super().clean()
+        self._validate_custom_specific()
+    
+    def _validate_custom_specific(self):
+        if self.pattern_type == 'days_of_week':
+            self._validate_days_of_week_pattern()
+        elif self.pattern_type == 'interval_based':
+            self._validate_interval_based_pattern()
+        elif self.pattern_type == 'specific_dates':
+            self._validate_specific_dates_pattern()
+        
+        if self.enable_multiple_times:
+            self._validate_time_slots()
+        if self.enable_multiple_periods:
+            self._validate_multiple_periods()
+    
+    def _validate_days_of_week_pattern(self):
+        if self.frequency_interval < 1:
+            raise ValidationError("Minimum 1 semaine pour pattern 'days_of_week'")
+    
+    def _validate_interval_based_pattern(self):
+        if not self.interval_days:
+            raise ValidationError("interval_days requis pour pattern 'interval_based'")
+        if self.interval_days < 1:
+            raise ValidationError("Minimum 1 jour pour interval_days")
+    
+    def _validate_specific_dates_pattern(self):
+        if not self.specific_dates:
+            raise ValidationError("Au moins une date requise pour pattern 'specific_dates'")
+        if len(self.specific_dates) > 100:
+            raise ValidationError("Maximum 100 dates spécifiques")
+        for date_str in self.specific_dates:
+            try:
+                datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValidationError(f"Format de date invalide : {date_str}. Utilisez format ISO")
+    
+    def _validate_time_slots(self):
+        if not self.time_slots:
+            raise ValidationError("Au moins un créneau requis si enable_multiple_times=True")
+        if len(self.time_slots) > 5:
+            raise ValidationError("Maximum 5 créneaux par jour")
+        for slot in self.time_slots:
+            try:
+                datetime.strptime(slot, '%H:%M')
+            except ValueError:
+                raise ValidationError(f"Format horaire invalide: {slot}. Utilisez HH:MM")
+    
+    def _validate_multiple_periods(self):
+        if not self.periods.exists():
+            raise ValidationError("Au moins une période requise si enable_multiple_periods=True")
+
+class RecurrencePeriod(models.Model):
+    custom_config = models.ForeignKey('CustomRecurrenceConfig', on_delete=models.CASCADE, related_name='periods')
+    period_number = models.PositiveIntegerField()
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Période de récurrence"
+        verbose_name_plural = "Périodes de récurrence"
+        unique_together = ['custom_config', 'period_number']
+        ordering = ['period_number']
+    
+    def __str__(self):
+        return f"Période {self.period_number}: {self.start_date} → {self.end_date}"
+    
+    def clean(self):
+        super().clean()
+        if self.start_date >= self.end_date:
+            raise ValidationError("La date de fin doit être postérieure à la date de début")
+        if self.period_number < 1 or self.period_number > 4:
+            raise ValidationError("Numéro de période doit être entre 1 et 4")
+        if self.custom_config_id:
+            overlapping_periods = RecurrencePeriod.objects.filter(
+                custom_config=self.custom_config, is_active=True
+            ).exclude(id=self.id)
+            for period in overlapping_periods:
+                if (self.start_date <= period.end_date and self.end_date >= period.start_date):
+                    raise ValidationError(f"Chevauchement avec période {period.period_number}")
+        if (self.end_date - self.start_date).days > 365:
+            raise ValidationError("Une période ne peut pas dépasser 1 an")
 
 class Quote(models.Model):
     """
