@@ -1,5 +1,3 @@
-# courses/Reservations/Reservations_details/helpers.py
-
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework import status
@@ -10,14 +8,9 @@ from courses.models import Booking, BookingSegment, Estimate, EstimateAttribute,
 from parametrages.models import APIKey
 from courses.Estimations.helpers import calculate_distances_and_durations
 
-# ============== SERVICES CENTRALISÉS ==============
-
 class ValidationService:
-    """Service centralisé pour toutes les validations"""
-    
     @staticmethod
     def validate_params_for_statistics(request):
-        # Validation centralisée pour toutes les vues statistiques
         from .serializers import RecurringSearchParamsSerializer
         
         params_serializer = RecurringSearchParamsSerializer(data=request.query_params)
@@ -33,7 +26,6 @@ class ValidationService:
     
     @staticmethod
     def validate_booking_exists(booking_id):
-        # Validation centralisée d'existence booking
         if not booking_id:
             return False, create_response(
                 status_type="error",
@@ -53,7 +45,6 @@ class ValidationService:
     
     @staticmethod
     def validate_segment_update_data(request_data, allowed_fields):
-        # Validation centralisée pour mise à jour segments
         update_data = {
             field: value for field, value in request_data.items() 
             if field in allowed_fields
@@ -70,7 +61,6 @@ class ValidationService:
     
     @staticmethod
     def validate_compensation_commission(compensation, commission):
-        # Validation métier compensation/commission
         if compensation > 0 and commission > 0:
             return False, create_response(
                 status_type="error",
@@ -81,7 +71,6 @@ class ValidationService:
 
     @staticmethod
     def validate_booking_for_return_trip(booking_id):
-        # Valide qu'un booking peut être transformé en aller-retour
         try:
             booking = Booking.objects.get(id=booking_id)
             
@@ -101,7 +90,6 @@ class ValidationService:
 
     @staticmethod
     def validate_booking_for_duplication(booking_id):
-        # Valide qu'un booking peut être dupliqué
         try:
             return Booking.objects.select_related(
                 'estimate__estimation_log', 'client', 'assigned_driver', 'assigned_partner'
@@ -116,11 +104,8 @@ class ValidationService:
             return None, str(e)
 
 class ResponseBuilder:
-    """Constructeur centralisé pour toutes les réponses"""
-    
     @staticmethod
     def success_response(message, data=None, http_status=status.HTTP_200_OK):
-        # Réponse de succès standardisée
         return create_response(
             status_type="success",
             message=message,
@@ -130,7 +115,6 @@ class ResponseBuilder:
     
     @staticmethod
     def error_response(message, data=None, http_status=status.HTTP_400_BAD_REQUEST):
-        # Réponse d'erreur standardisée
         return create_response(
             status_type="error",
             message=message,
@@ -140,7 +124,6 @@ class ResponseBuilder:
     
     @staticmethod
     def not_found_response(resource="Ressource"):
-        # Réponse 404 standardisée
         return create_response(
             status_type="error",
             message=f"{resource} non trouvée",
@@ -149,7 +132,6 @@ class ResponseBuilder:
     
     @staticmethod
     def validation_error_response(errors):
-        # Réponse d'erreur de validation standardisée
         return create_response(
             status_type="error",
             message="Données invalides",
@@ -158,43 +140,39 @@ class ResponseBuilder:
         )
 
 class FilterContextBuilder:
-    """Constructeur centralisé pour le contexte de filtrage"""
-    
     @staticmethod
     def build_context(params):
-        # Construction complète du contexte de filtrage
         scope = params.get('scope', 'total')
         search_key = params.get('search_key', '')
         
         context = {
             'current_scope': scope,
             'current_search_key': search_key,
-            'filter_level': FilterContextBuilder._determine_filter_level(scope, search_key),
+            'filter_level': FilterContextBuilder._determine_filter_level(scope, search_key, params),
             'filter_type': FilterContextBuilder._determine_filter_type(scope, search_key),
-            'breadcrumb': FilterContextBuilder._build_breadcrumb(scope, search_key),
+            'breadcrumb': FilterContextBuilder._build_breadcrumb(scope, search_key, params),
             'navigation_hints': FilterContextBuilder._build_navigation_hints(scope, search_key)
         }
         
         return context
     
     @staticmethod
-    def _determine_filter_level(scope, search_key):
-        # Détermine le niveau de profondeur du filtrage
-        if not search_key or search_key == 'total':
-            return 1
-        
-        if search_key.startswith(('recurring_monthly_', 'recurring_custom_')):
+    def _determine_filter_level(scope, search_key, params):
+        # Niveau 3 : filtres finaux appliqués
+        level_3_filters = ['billing_status', 'cancellation_status', 'payment_timing']
+        if any(params.get(filter_name) for filter_name in level_3_filters):
             return 3
-        elif search_key.startswith('recurring_type_'):
-            return 2
-        elif search_key.startswith(('recurring_', 'booking_type_', 'status_')):
+        
+        # Niveau 2 : filtres intermédiaires
+        level_2_prefixes = ['status_', 'booking_type_', 'recurring_type_', 'recurring_monthly_', 'recurring_custom_']
+        if search_key and any(search_key.startswith(prefix) for prefix in level_2_prefixes):
             return 2
         
+        # Niveau 1 : scope uniquement
         return 1
     
     @staticmethod
     def _determine_filter_type(scope, search_key):
-        # Détermine le type de filtrage actif
         if scope == 'recurring' or search_key.startswith('recurring_'):
             return 'recurring'
         elif search_key.startswith('booking_type_'):
@@ -209,10 +187,10 @@ class FilterContextBuilder:
         return 'standard'
     
     @staticmethod
-    def _build_breadcrumb(scope, search_key):
-        # Construction du breadcrumb de navigation
+    def _build_breadcrumb(scope, search_key, params):
         breadcrumb = []
         
+        # Niveau 1 : Scope
         if scope and scope != 'total':
             scope_labels = {
                 'today': 'Aujourd\'hui',
@@ -228,14 +206,31 @@ class FilterContextBuilder:
                 'search_key': None
             })
         
+        # Niveau 2 : Search key
         if search_key and search_key != 'total':
-            breadcrumb.extend(FilterContextBuilder._build_search_key_breadcrumb(search_key))
+            breadcrumb.extend(FilterContextBuilder._build_search_key_breadcrumb(search_key, scope))
+        
+        # Niveau 3 : Filtres finaux
+        level_3_filters = {
+            'billing_status': 'Facturation',
+            'cancellation_status': 'Annulation', 
+            'payment_timing': 'Paiement'
+        }
+        
+        for filter_name, filter_label in level_3_filters.items():
+            filter_value = params.get(filter_name)
+            if filter_value:
+                breadcrumb.append({
+                    'label': f"{filter_label}: {filter_value}",
+                    'scope': scope,
+                    'search_key': search_key,
+                    'filter': {filter_name: filter_value}
+                })
         
         return breadcrumb
     
     @staticmethod
-    def _build_search_key_breadcrumb(search_key):
-        # Construction du breadcrumb pour search_key
+    def _build_search_key_breadcrumb(search_key, scope):
         breadcrumb = []
         
         if search_key.startswith('recurring_'):
@@ -291,7 +286,6 @@ class FilterContextBuilder:
     
     @staticmethod
     def _build_navigation_hints(scope, search_key):
-        # Construction des hints de navigation pour le frontend
         hints = {
             'can_drill_down': False,
             'available_filters': ['billing_status', 'cancellation_status', 'payment_timing'],
@@ -308,11 +302,8 @@ class FilterContextBuilder:
         return hints
 
 class CommunicationHandler:
-    """Gestionnaire centralisé pour les communications"""
-    
     @staticmethod
     def handle_round_trip_communications(booking_id, validated_data, user):
-        # Gestion centralisée des communications aller-retour
         try:
             send_duplication_communications, send_round_trip_communications = get_communication_functions()
             if not send_round_trip_communications:
@@ -335,7 +326,6 @@ class CommunicationHandler:
     
     @staticmethod
     def handle_duplication_communications(new_booking_id, source_booking_id, user):
-        # Gestion centralisée des communications duplication
         try:
             send_duplication_communications, send_round_trip_communications = get_communication_functions()
             if not send_duplication_communications:
@@ -358,7 +348,6 @@ class CommunicationHandler:
     
     @staticmethod
     def _build_communication_details(comm_success, comm_message, booking_id):
-        # Construction des détails de communication
         if comm_success:
             try:
                 booking = Booking.objects.get(id=booking_id)
@@ -380,7 +369,6 @@ class CommunicationHandler:
     
     @staticmethod
     def _count_passenger_emails(booking):
-        # Compte les passagers avec email selon le type de booking
         if booking.booking_type == 'one_way':
             if booking.estimate:
                 return booking.estimate.passengers.exclude(
@@ -398,11 +386,8 @@ class CommunicationHandler:
         return 0
 
 class ResponseDataBuilder:
-    """Constructeur centralisé pour les données de réponse complexes"""
-    
     @staticmethod
     def build_transformation_response_data(booking_id, result, validated_data, user, comm_success, comm_details):
-        # Construction des données de réponse pour transformation aller-retour
         booking = Booking.objects.get(id=booking_id)
         display_data = format_round_trip_booking_data(booking, include_request_data=False)
         
@@ -427,7 +412,6 @@ class ResponseDataBuilder:
     
     @staticmethod
     def build_duplication_response_data(result, comm_success, comm_details, user):
-        # Construction des données de réponse pour duplication
         new_booking = Booking.objects.get(id=result['new_booking_id'])
         display_data = format_duplication_booking_data(new_booking, include_request_data=False)
         
@@ -448,222 +432,11 @@ class ResponseDataBuilder:
             }
         }
 
-# ============== UTILITAIRES DE BASE ==============
-
-def get_query_params(request):
-    # Get query parameters compatible with Django and DRF
-    if hasattr(request, 'query_params'):
-        return request.query_params
-    elif hasattr(request, 'GET'):
-        return request.GET
-    return {}
-
-def extract_booking_filters(request):
-    # Extract booking filters from query parameters
-    query_params = get_query_params(request)
-    return {
-        key: query_params.get(key) 
-        for key in ['billing_status', 'cancellation_status', 'payment_timing'] 
-        if query_params.get(key)
-    }
-
-def extract_scope_and_search_key(request):
-    # Extract scope and search_key from request
-    query_params = get_query_params(request)
-    return {
-        'scope': query_params.get('scope'),
-        'search_key': query_params.get('search_key')
-    }
-
-def validate_search_key(search_key):
-    # Validate search_key parameter
-    return (True, None) if search_key else (False, "Clé de recherche manquante")
-
-def validate_detail_request(request):
-    # Validate request parameters for detail view
-    params = extract_scope_and_search_key(request)
-    is_valid, error_message = validate_search_key(params['search_key'])
-    
-    if not is_valid:
-        return False, create_response(
-            status_type="error",
-            message=error_message,
-            http_status=status.HTTP_400_BAD_REQUEST
-        ), None
-    
-    return True, None, params
-
-def calculate_trip_metrics(departure, destination, waypoints=None, api_key=None):
-    # Calcule automatiquement distance et durée pour un trajet
-    try:
-        if not api_key:
-            api_key_obj = APIKey.objects.first()
-            if not api_key_obj:
-                return {"distance_travelled": 0, "duration_travelled": "0h0min"}
-            api_key = api_key_obj.key_value
-        
-        result = calculate_distances_and_durations(
-            api_key, departure, destination, origin=None, waypoints=waypoints
-        )
-        
-        duration_minutes = result["dur_parcourt_minutes"]
-        hours = int(duration_minutes // 60)
-        minutes = int(duration_minutes % 60)
-        duration_formatted = f"{hours}h{minutes:02d}min"
-        
-        return {
-            "distance_travelled": round(result["dist_parcourt_km"], 2),
-            "duration_travelled": duration_formatted
-        }
-        
-    except Exception as e:
-        print(f"Erreur calcul métriques pour {departure} → {destination}: {e}")
-        return {"distance_travelled": 0, "duration_travelled": "0h0min"}
-
-def calculate_attributes_cost(attributes_data):
-    # Calcule le coût total des attributs
-    from configurations.models import Attribute
-    return sum(
-        Attribute.objects.get(id=attr['attribute']).unit_price * attr['quantity']
-        for attr in attributes_data
-        if Attribute.objects.filter(id=attr['attribute']).exists()
-    )
-
-def calculate_base_cost(original_estimate):
-    # Calcule le coût de base pour le retour
-    return max((original_estimate.total_booking_cost or 0) - 
-               (original_estimate.total_attributes_cost or 0), 0)
-
-def should_create_separate_estimate(original_estimate, return_data):
-    # Détermine s'il faut créer un nouvel estimate ou réutiliser l'existant
-    original_log = original_estimate.estimation_log
-    
-    checks = [
-        (return_data.get('departure') != original_log.destination or 
-         return_data.get('destination') != original_log.departure),
-        (original_log.waypoints or []) != return_data.get('waypoints', []),
-        'vehicle_id' in return_data and return_data['vehicle_id'] != original_estimate.user_choice.vehicle_id,
-        'payment_method_id' in return_data and return_data['payment_method_id'] != (
-            original_estimate.payment_method.id if original_estimate.payment_method else None
-        ),
-        'passengers' in return_data and return_data['passengers'].get('new'),
-        'estimate_attributes' in return_data and return_data['estimate_attributes']
-    ]
-    
-    simple_fields = ['flight_number', 'message', 'number_of_luggages', 'number_of_passengers']
-    for field in simple_fields:
-        original_value = str(getattr(original_estimate, field, '') or '')
-        new_value = str(return_data.get(field, '') or '')
-        if original_value != new_value:
-            checks.append(True)
-    
-    return any(checks)
-
-# ============== CONSTRUCTEURS DE RÉPONSES ==============
-
-def build_empty_stats_response(model_class):
-    # Build empty sub-stats when no data found
-    return {
-        'total': 0,
-        'billing_status': {code: 0 for code, _ in model_class.BILLING_STATUS_CHOICES},
-        'cancellation_status': {code: 0 for code, _ in model_class.CANCELLATION_STATUS_CHOICES},
-        'payment_timing': {code: 0 for code, _ in model_class.PAYMENT_TIMING_CHOICES}
-    }
-
-def build_empty_pagination_response():
-    # Build empty pagination when no data found
-    return {
-        'page': 1, 'page_size': 20, 'total_pages': 0, 'total_count': 0,
-        'has_next': False, 'has_previous': False, 'next': None, 'previous': None
-    }
-
-def build_global_stats_response(main_stats, serialized_data):
-    # Build response for global statistics
-    return create_response(
-        status_type="success",
-        message="Statistiques des réservations récupérées avec succès",
-        data=serialized_data
-    )
-
-def build_detail_response(serialized_data):
-    # Build response for booking detail
-    return create_response(
-        status_type="success",
-        message="Détails de la réservation récupérés avec succès",
-        data=serialized_data
-    )
-
-def build_update_response(serialized_data):
-    # Build response for booking update
-    return create_response(
-        status_type="success",
-        message="Réservation mise à jour avec succès",
-        data=serialized_data
-    )
-
-def build_empty_detail_response(model_class):
-    # Build empty response for detail statistics
-    return create_response(
-        status_type="success",
-        message="Aucune réservation trouvée pour les critères spécifiés",
-        data={
-            'bookings': [],
-            'sub_stats': build_empty_stats_response(model_class),
-            'pagination': build_empty_pagination_response()
-        }
-    )
-
-def build_extended_empty_detail_response(params):
-    # Réponse vide étendue optimisée
-    scope = params.get('scope', 'total')
-    search_key = params.get('search_key', '')
-    
-    message = "Aucune réservation trouvée"
-    if scope == 'recurring':
-        message = "Aucune réservation récurrente trouvée"
-    elif search_key.startswith('recurring_'):
-        message = "Aucune réservation trouvée pour ce type de récurrence"
-    
-    return ResponseBuilder.success_response(
-        message=message,
-        data={
-            'bookings': [],
-            'sub_stats': _get_empty_sub_stats(),
-            'pagination': _get_empty_pagination(),
-            'filter_context': FilterContextBuilder.build_context(params)
-        }
-    )
-
-def _get_empty_sub_stats():
-    # Sous-stats vides standardisées
-    return {
-        'total': 0,
-        'billing_status': {code: 0 for code, _ in Booking.BILLING_STATUS_CHOICES},
-        'cancellation_status': {code: 0 for code, _ in Booking.CANCELLATION_STATUS_CHOICES},
-        'payment_timing': {code: 0 for code, _ in Booking.PAYMENT_TIMING_CHOICES}
-    }
-
-def _get_empty_pagination():
-    # Pagination vide standardisée
-    return {
-        'page': 1, 'page_size': 20, 'total_pages': 0, 'total_count': 0,
-        'has_next': False, 'has_previous': False, 'next': None, 'previous': None
-    }
-
-# ============== WRAPPERS COMPATIBILITÉ ==============
-
-def validate_booking_detail_request(booking_id):
-    # Wrapper pour compatibilité - utilise le service centralisé
-    return ValidationService.validate_booking_exists(booking_id)
-
-# ============== SÉRIALISEURS UNIFIÉS ==============
-
 class DataSerializer:
     """Classe unifiée pour la sérialisation de tous les objets"""
     
     @staticmethod
     def serialize_passenger(passenger):
-        # Sérialise un passager
         return {
             'id': passenger.id,
             'name': passenger.name,
@@ -675,7 +448,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_estimate_attribute(attr):
-        # Sérialise un attribut d'estimation
         return {
             'id': attr.id,
             'attribute_id': attr.attribute.id,
@@ -688,7 +460,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_vehicle(user_choice):
-        # Sérialise les données du véhicule
         if not user_choice or not user_choice.vehicle_id:
             return None
         
@@ -719,7 +490,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_payment_method(payment_method):
-        # Sérialise la méthode de paiement
         if not payment_method:
             return None
         
@@ -732,7 +502,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_meeting_place(meeting_place):
-        # Sérialise le lieu de rendez-vous
         if not meeting_place:
             return None
         
@@ -745,7 +514,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_estimation_log(estimation_log):
-        # Sérialise un log d'estimation
         return {
             'id': estimation_log.id,
             'departure': estimation_log.departure,
@@ -767,7 +535,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_estimate(estimate):
-        # Sérialise une estimation complète
         return {
             'id': estimate.id,
             'flight_number': estimate.flight_number,
@@ -789,7 +556,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_client(client):
-        # Sérialise les données du client
         if not client:
             return None
         
@@ -809,7 +575,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_driver(driver):
-        # Sérialise les données du chauffeur
         if not driver:
             return None
         
@@ -826,7 +591,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_partner(partner):
-        # Sérialise les données du partenaire
         if not partner:
             return None
         
@@ -841,7 +605,6 @@ class DataSerializer:
 
     @staticmethod
     def serialize_booking(booking):
-        # Sérialise un booking complet
         return {
             'id': booking.id,
             'booking_number': booking.booking_number,
@@ -868,10 +631,354 @@ class DataSerializer:
             'assigned_partner': DataSerializer.serialize_partner(booking.assigned_partner)
         }
 
-# ============== CRÉATEURS D'OBJETS OPTIMISÉS ==============
+def get_query_params(request):
+    if hasattr(request, 'query_params'):
+        return request.query_params
+    elif hasattr(request, 'GET'):
+        return request.GET
+    return {}
+
+def extract_booking_filters(request):
+    query_params = get_query_params(request)
+    return {
+        key: query_params.get(key) 
+        for key in ['billing_status', 'cancellation_status', 'payment_timing'] 
+        if query_params.get(key)
+    }
+
+def extract_scope_and_search_key(request):
+    query_params = get_query_params(request)
+    return {
+        'scope': query_params.get('scope'),
+        'search_key': query_params.get('search_key')
+    }
+
+def validate_search_key(search_key):
+    return (True, None) if search_key else (False, "Clé de recherche manquante")
+
+def validate_detail_request(request):
+    params = extract_scope_and_search_key(request)
+    is_valid, error_message = validate_search_key(params['search_key'])
+    
+    if not is_valid:
+        return False, create_response(
+            status_type="error",
+            message=error_message,
+            http_status=status.HTTP_400_BAD_REQUEST
+        ), None
+    
+    return True, None, params
+
+def calculate_trip_metrics(departure, destination, waypoints=None, api_key=None):
+    try:
+        if not api_key:
+            api_key_obj = APIKey.objects.first()
+            if not api_key_obj:
+                return {"distance_travelled": 0, "duration_travelled": "0h0min"}
+            api_key = api_key_obj.key_value
+        
+        result = calculate_distances_and_durations(
+            api_key, departure, destination, origin=None, waypoints=waypoints
+        )
+        
+        duration_minutes = result["dur_parcourt_minutes"]
+        hours = int(duration_minutes // 60)
+        minutes = int(duration_minutes % 60)
+        duration_formatted = f"{hours}h{minutes:02d}min"
+        
+        return {
+            "distance_travelled": round(result["dist_parcourt_km"], 2),
+            "duration_travelled": duration_formatted
+        }
+        
+    except Exception as e:
+        print(f"Erreur calcul métriques pour {departure} → {destination}: {e}")
+        return {"distance_travelled": 0, "duration_travelled": "0h0min"}
+
+def calculate_attributes_cost(attributes_data):
+    from configurations.models import Attribute
+    return sum(
+        Attribute.objects.get(id=attr['attribute']).unit_price * attr['quantity']
+        for attr in attributes_data
+        if Attribute.objects.filter(id=attr['attribute']).exists()
+    )
+
+def calculate_base_cost(original_estimate):
+    return max((original_estimate.total_booking_cost or 0) - 
+               (original_estimate.total_attributes_cost or 0), 0)
+
+def should_create_separate_estimate(original_estimate, return_data):
+    original_log = original_estimate.estimation_log
+    
+    checks = [
+        (return_data.get('departure') != original_log.destination or 
+         return_data.get('destination') != original_log.departure),
+        (original_log.waypoints or []) != return_data.get('waypoints', []),
+        'vehicle_id' in return_data and return_data['vehicle_id'] != original_estimate.user_choice.vehicle_id,
+        'payment_method_id' in return_data and return_data['payment_method_id'] != (
+            original_estimate.payment_method.id if original_estimate.payment_method else None
+        ),
+        'passengers' in return_data and return_data['passengers'].get('new'),
+        'estimate_attributes' in return_data and return_data['estimate_attributes']
+    ]
+    
+    simple_fields = ['flight_number', 'message', 'number_of_luggages', 'number_of_passengers']
+    for field in simple_fields:
+        original_value = str(getattr(original_estimate, field, '') or '')
+        new_value = str(return_data.get(field, '') or '')
+        if original_value != new_value:
+            checks.append(True)
+    
+    return any(checks)
+
+def build_empty_stats_response(model_class):
+    return {
+        'total': 0,
+        'billing_status': {code: 0 for code, _ in model_class.BILLING_STATUS_CHOICES},
+        'cancellation_status': {code: 0 for code, _ in model_class.CANCELLATION_STATUS_CHOICES},
+        'payment_timing': {code: 0 for code, _ in model_class.PAYMENT_TIMING_CHOICES}
+    }
+
+def build_empty_pagination_response():
+    return {
+        'page': 1, 'page_size': 12, 'total_pages': 0, 'total_count': 0,
+        'has_next': False, 'has_previous': False, 'next': None, 'previous': None
+    }
+
+def build_global_stats_response(main_stats, serialized_data):
+    return create_response(
+        status_type="success",
+        message="Statistiques des réservations récupérées avec succès",
+        data=serialized_data
+    )
+
+def build_detail_response(serialized_data):
+    return create_response(
+        status_type="success",
+        message="Détails de la réservation récupérés avec succès",
+        data=serialized_data
+    )
+
+def build_update_response(serialized_data):
+    return create_response(
+        status_type="success",
+        message="Réservation mise à jour avec succès",
+        data=serialized_data
+    )
+
+def build_empty_detail_response(model_class):
+    return create_response(
+        status_type="success",
+        message="Aucune réservation trouvée pour les critères spécifiés",
+        data={
+            'bookings': [],
+            'sub_stats': build_empty_stats_response(model_class),
+            'pagination': build_empty_pagination_response()
+        }
+    )
+
+def build_extended_empty_detail_response(params):
+    scope = params.get('scope', 'total')
+    search_key = params.get('search_key', '')
+    
+    message = "Aucune réservation trouvée"
+    if scope == 'recurring':
+        message = "Aucune réservation récurrente trouvée"
+    elif search_key.startswith('recurring_'):
+        message = "Aucune réservation trouvée pour ce type de récurrence"
+    
+    return ResponseBuilder.success_response(
+        message=message,
+        data={
+            'bookings': [],
+            'sub_stats': _get_empty_sub_stats(),
+            'pagination': _get_empty_pagination(),
+            'filter_context': FilterContextBuilder.build_context(params)
+        }
+    )
+
+def _get_empty_sub_stats():
+    return {
+        'total': 0,
+        'billing_status': {code: 0 for code, _ in Booking.BILLING_STATUS_CHOICES},
+        'cancellation_status': {code: 0 for code, _ in Booking.CANCELLATION_STATUS_CHOICES},
+        'payment_timing': {code: 0 for code, _ in Booking.PAYMENT_TIMING_CHOICES}
+    }
+
+def _get_empty_pagination():
+    return {
+        'page': 1, 'page_size': 12, 'total_pages': 0, 'total_count': 0,
+        'has_next': False, 'has_previous': False, 'next': None, 'previous': None
+    }
+
+def validate_booking_detail_request(booking_id):
+    return ValidationService.validate_booking_exists(booking_id)
+
+def generate_return_preview(booking_id):
+    booking, error = ValidationService.validate_booking_for_return_trip(booking_id)
+    if error:
+        raise ValueError(error)
+    
+    original_estimate = booking.estimate
+    original_log = original_estimate.estimation_log
+    base_cost = calculate_base_cost(original_estimate)
+    
+    original_booking_summary = {
+        'id': booking.id,
+        'booking_number': booking.booking_number,
+        'booking_type': booking.booking_type,
+        'status': booking.status,
+        'created_at': booking.created_at.isoformat() if booking.created_at else None,
+        'departure': original_log.departure,
+        'destination': original_log.destination,
+        'pickup_date': original_log.pickup_date.isoformat() if original_log.pickup_date else None,
+        'total_cost': original_estimate.total_booking_cost or 0,
+        'flight_number': original_estimate.flight_number,
+        'number_of_passengers': original_estimate.number_of_passengers,
+        'number_of_luggages': original_estimate.number_of_luggages
+    }
+    
+    return_trip_data = {
+        'departure': original_log.destination,
+        'destination': original_log.departure,
+        'pickup_date': timezone.now().isoformat(),
+        'estimated_cost': base_cost,
+        'flight_number': original_estimate.flight_number or '',
+        'message': '',
+        'number_of_passengers': original_estimate.number_of_passengers,
+        'number_of_luggages': original_estimate.number_of_luggages,
+        'waypoints': [],
+        'compensation': 0,
+        'commission': 0,
+        'status': 'pending'
+    }
+    
+    from courses.Reservations.Reservations_details.helpers import DataSerializer
+    
+    shared_data = {
+        'client': DataSerializer.serialize_client(booking.client),
+        'vehicle': DataSerializer.serialize_vehicle(original_estimate.user_choice),
+        'payment_method': DataSerializer.serialize_payment_method(original_estimate.payment_method),
+        'meeting_place': DataSerializer.serialize_meeting_place(original_estimate.meeting_place),
+        'passengers': [DataSerializer.serialize_passenger(p) for p in original_estimate.passengers.all()],
+        'estimate_attributes': [DataSerializer.serialize_estimate_attribute(a) for a in original_estimate.estimate_attribute.all()],
+        'assigned_driver': DataSerializer.serialize_driver(booking.assigned_driver),
+        'assigned_partner': DataSerializer.serialize_partner(booking.assigned_partner)
+    }
+    
+    cost_breakdown = {
+        'original_total_cost': original_estimate.total_booking_cost or 0,
+        'original_attributes_cost': original_estimate.total_attributes_cost or 0,
+        'calculated_base_cost': base_cost,
+        'return_estimated_cost': base_cost
+    }
+    
+    return {
+        'eligible': True,
+        'outbound_trip': original_booking_summary,
+        'return_trip': return_trip_data,
+        'shared_data': shared_data,
+        'cost_breakdown': cost_breakdown,
+        'transformation_options': {
+            'can_modify_vehicle': True,
+            'can_modify_payment_method': True,
+            'can_modify_passengers': True,
+            'can_modify_attributes': True,
+            'can_add_waypoints': True,
+            'can_modify_pricing': True,
+            'can_modify_schedule': True
+        }
+    }
+
+def convert_booking_to_round_trip(booking_id, return_data, user=None):
+    with transaction.atomic():
+        booking, error = ValidationService.validate_booking_for_return_trip(booking_id)
+        if error:
+            raise ValueError(error)
+        
+        original_estimate = booking.estimate
+        if not original_estimate:
+            raise ValueError("Aucune estimation associée au booking")
+        
+        booking._skip_change_tracking = True
+        
+        logs_created = False
+        if user:
+            try:
+                user_display = f"{user.first_name} {user.last_name}".strip() or user.username
+                departure_short = shorten_address(return_data.get('departure', ''))
+                destination_short = shorten_address(return_data.get('destination', ''))
+                
+                pickup_date = return_data.get('pickup_date')
+                if pickup_date:
+                    date_short = format_date_business(pickup_date)
+                else:
+                    date_short = "Date non définie"
+                
+                base_message = (
+                    f"Réservation {booking.booking_number} transformée en aller-retour par {user_display}. "
+                    f"Retour: {departure_short} → {destination_short} le {date_short} ({return_data.get('total_cost', 0)}€)"
+                )
+                
+                from courses.models import BookingLog
+                BookingLog.objects.create(
+                    booking=booking,
+                    user=user,
+                    action=base_message
+                )
+                logs_created = True
+                
+            except Exception:
+                logs_created = False
+        
+        original_estimate.estimation_log.is_booked = True
+        original_estimate.estimation_log.save()
+        
+        outbound_segment = BookingSegment.objects.create(
+            booking=booking, segment_type='outbound', estimate=original_estimate,
+            status=booking.status, segment_cost=original_estimate.total_booking_cost or 0,
+            compensation=booking.compensation or 0, commission=booking.commission or 0, order=1
+        )
+        
+        if should_create_separate_estimate(original_estimate, return_data):
+            return_estimate = create_return_estimate(return_data, booking)
+            estimates_created = 1
+        else:
+            return_estimate = original_estimate
+            estimates_created = 0
+        
+        return_segment = BookingSegment.objects.create(
+            booking=booking, segment_type='return', estimate=return_estimate,
+            status='pending', segment_cost=return_data.get('total_cost', 0),
+            compensation=return_data.get('compensation', 0), 
+            commission=return_data.get('commission', 0), order=2
+        )
+        
+        booking.booking_type = 'round_trip'
+        booking.estimate = None
+        booking.driver_sale_price = booking.effective_driver_sale_price
+        booking.partner_sale_price = booking.effective_partner_sale_price
+        booking.save(update_fields=['booking_type', 'estimate', 'driver_sale_price', 'partner_sale_price'])
+        
+        return {
+            'booking_id': booking.id,
+            'booking_number': booking.booking_number,
+            'segments_created': 2,
+            'estimates_created': estimates_created,
+            'outbound_segment_id': outbound_segment.id,
+            'return_segment_id': return_segment.id,
+            'return_estimate_id': return_estimate.id,
+            'logs_created': logs_created,
+            'price_calculation': {
+                'old_driver_price': 0,
+                'new_driver_price': booking.driver_sale_price,
+                'old_partner_price': 0,
+                'new_partner_price': booking.partner_sale_price,
+                'total_cost_calculated': booking.total_cost_calculated
+            }
+        }
 
 def create_return_estimation_log(return_data, original_booking):
-    # Crée un nouvel EstimationLog pour le retour avec calculs automatiques
     original_log = original_booking.estimate.estimation_log
     
     metrics = calculate_trip_metrics(
@@ -893,7 +1000,6 @@ def create_return_estimation_log(return_data, original_booking):
     )
 
 def create_return_estimate(return_data, original_booking):
-    # Crée un nouvel Estimate pour le retour
     from courses.Reservations.helpers import create_and_associate_passengers, process_estimate_attributes
     from configurations.models import Vehicle, PaymentMethod
     from courses.models import UserChoice
@@ -951,532 +1057,8 @@ def create_return_estimate(return_data, original_booking):
     
     return return_estimate
 
-class EstimateCreator:
-    """Créateur unifié pour les estimates de duplication avec calculs automatiques"""
-    
-    @staticmethod
-    def create_estimation_log(template_data, modifications, source_user):
-        # Crée juste un EstimationLog, pas de tariff
-        departure = modifications.get('departure', template_data['departure'])
-        destination = modifications.get('destination', template_data['destination'])
-        waypoints = modifications.get('waypoints', template_data.get('waypoints', []))
-        
-        metrics = calculate_trip_metrics(departure, destination, waypoints)
-        
-        return EstimationLog.objects.create(
-            departure=departure,
-            destination=destination,
-            pickup_date=modifications.get('pickup_date', template_data['pickup_date']),
-            waypoints=waypoints,
-            estimate_type=template_data.get('estimate_type', 'simple_transfer'),
-            user=source_user,
-            is_booked=True,
-            distance_travelled=metrics["distance_travelled"],
-            duration_travelled=metrics["duration_travelled"]
-        )
-    
-    @staticmethod
-    def create_user_choice(modifications, template_data, source_estimate):
-        # Crée un UserChoice avec validation du véhicule
-        from configurations.models import Vehicle
-        from courses.models import UserChoice
-        
-        vehicle_id = modifications.get('vehicle_id', template_data.get('vehicle_id'))
-        if vehicle_id and not Vehicle.objects.filter(id=vehicle_id).exists():
-            vehicle_id = source_estimate.user_choice.vehicle_id if source_estimate.user_choice else None
-        
-        return UserChoice.objects.create(vehicle_id=vehicle_id, is_standard_cost=True)
-    
-    @staticmethod
-    def get_payment_method(modifications, template_data, source_estimate):
-        # Récupère la méthode de paiement
-        from configurations.models import PaymentMethod
-        
-        payment_method_id = modifications.get('payment_method_id', template_data.get('payment_method_id'))
-        if payment_method_id:
-            try:
-                return PaymentMethod.objects.get(id=payment_method_id)
-            except PaymentMethod.DoesNotExist:
-                pass
-        return source_estimate.payment_method
-    
-    @staticmethod
-    def get_meeting_place(template_data, source_estimate):
-        # Récupère le lieu de rendez-vous
-        from configurations.models import MeetingPlace
-        
-        if template_data.get('meeting_place_id'):
-            try:
-                return MeetingPlace.objects.get(id=template_data['meeting_place_id'])
-            except MeetingPlace.DoesNotExist:
-                pass
-        return source_estimate.meeting_place
-    
-    @staticmethod
-    def create_estimate_with_relations(template_data, modifications, source_estimate):
-        # Crée un estimate sans EstimationTariff
-        creator = EstimateCreator()
-        
-        estimation_log = creator.create_estimation_log(template_data, modifications, source_estimate.estimation_log.user)
-        user_choice = creator.create_user_choice(modifications, template_data, source_estimate)
-        payment_method = creator.get_payment_method(modifications, template_data, source_estimate)
-        meeting_place = creator.get_meeting_place(template_data, source_estimate)
-        
-        base_cost = float(modifications.get('total_booking_cost', template_data.get('total_booking_cost', 0)))
-        attributes_cost = float(calculate_attributes_cost(modifications.get('estimate_attributes', [])))
-        total_cost = base_cost + attributes_cost
-        
-        estimate = Estimate.objects.create(
-            estimation_log=estimation_log,
-            user_choice=user_choice,
-            meeting_place=meeting_place,
-            payment_method=payment_method,
-            flight_number=modifications.get('flight_number', template_data.get('flight_number', '')),
-            message=modifications.get('message', template_data.get('message', '')),
-            total_booking_cost=total_cost,
-            total_attributes_cost=attributes_cost,
-            number_of_luggages=modifications.get('number_of_luggages', template_data.get('number_of_luggages')),
-            number_of_passengers=modifications.get('number_of_passengers', template_data.get('number_of_passengers')),
-            case_number=modifications.get('case_number', template_data.get('case_number')),
-            is_payment_pending=True
-        )
-        
-        creator.create_passengers(estimate, modifications.get('passengers', {}), modifications.get('client_id'))
-        creator.create_attributes(estimate, modifications.get('estimate_attributes', []))
-        
-        return estimate
-    
-    @staticmethod
-    def create_passengers(estimate, passengers_data, client_id):
-        # Crée et associe les passagers selon la structure existing/new
-        if not passengers_data:
-            return
-        
-        existing_ids = passengers_data.get('existing', [])
-        for passenger_id in existing_ids:
-            try:
-                passenger = Passenger.objects.get(id=passenger_id)
-                estimate.passengers.add(passenger)
-            except Passenger.DoesNotExist:
-                continue
-        
-        new_passengers = passengers_data.get('new', [])
-        for passenger_data in new_passengers:
-            try:
-                email = passenger_data.get('email', '').strip()
-                if not email:
-                    email = None
-                
-                passenger = Passenger.objects.create(
-                    name=passenger_data['name'],
-                    phone_number=passenger_data['phone_number'],
-                    email=email,
-                    is_main_client=passenger_data.get('is_main_client', False),
-                    client_id=client_id
-                )
-                estimate.passengers.add(passenger)
-                
-            except Exception:
-                continue
-    
-    @staticmethod
-    def create_attributes(estimate, attributes_data):
-        # Crée et associe les attributs
-        from configurations.models import Attribute
-        
-        for attr_data in attributes_data:
-            try:
-                attribute = Attribute.objects.get(id=attr_data['attribute'])
-                estimate_attr = EstimateAttribute.objects.create(
-                    attribute=attribute,
-                    quantity=attr_data['quantity']
-                )
-                estimate.estimate_attribute.add(estimate_attr)
-            except Attribute.DoesNotExist:
-                continue
-
-class BookingTemplateExtractor:
-    """Extracteur unifié pour les templates de duplication"""
-    
-    @staticmethod
-    def extract_estimate_base_data(estimate, suggested_date):
-        # Extrait les données de base d'un estimate avec calculs automatiques
-        estimation_log = estimate.estimation_log
-        
-        metrics = calculate_trip_metrics(
-            estimation_log.departure,
-            estimation_log.destination,
-            estimation_log.waypoints or []
-        )
-        
-        return {
-            'pickup_date': suggested_date.isoformat(),
-            'departure': estimation_log.departure,
-            'destination': estimation_log.destination,
-            'waypoints': estimation_log.waypoints or [],
-            'distance_travelled': metrics["distance_travelled"],
-            'duration_travelled': metrics["duration_travelled"],
-            'estimate_type': estimation_log.estimate_type,
-            'vehicle_id': estimate.user_choice.vehicle_id if estimate.user_choice else None,
-            'payment_method_id': estimate.payment_method.id if estimate.payment_method else None,
-            'meeting_place_id': estimate.meeting_place.id if estimate.meeting_place else None,
-            'base_cost': calculate_base_cost(estimate),
-            'flight_number': estimate.flight_number or '',
-            'number_of_passengers': estimate.number_of_passengers,
-            'number_of_luggages': estimate.number_of_luggages,
-            'case_number': estimate.case_number
-        }
-    
-    @staticmethod
-    def extract_booking_base_data(booking):
-        # Extrait les données de base d'un booking avec structure passagers
-        return {
-            'compensation': booking.compensation or 0,
-            'commission': booking.commission or 0,
-            'assigned_driver_id': None,
-            'assigned_partner_id': None,
-            'passengers': {'existing': [], 'new': []},
-            'estimate_attributes': [],
-            'message': ''
-        }
-    
-    @staticmethod
-    def get_suggested_date(pickup_date, days_offset=1):
-        # Calcule une date suggérée
-        from datetime import timedelta
-        return pickup_date + timedelta(days=days_offset)
-
-class BookingDuplicator:
-    """Duplicateur unifié pour tous types de booking"""
-    
-    @staticmethod
-    def create_booking_base(booking_type, client_id, source_booking):
-        # Crée les données de base d'un booking
-        return {
-            'booking_type': booking_type,
-            'client_id': client_id,
-            'status': 'pending',
-            'billing_status': 'not_invoiced',
-            'cancellation_status': 'not_cancelled',
-            'payment_timing': source_booking.payment_timing
-        }
-    
-    @staticmethod
-    def apply_pricing(total_cost, compensation=0, commission=0):
-        # Applique le pricing de façon unifiée
-        return apply_commission_or_compensation(total_cost, compensation, commission)
-    
-    @staticmethod
-    def duplicate_one_way(source_booking, modifications, user):
-        # Duplique un booking one_way avec calculs automatiques
-        template_data = extract_booking_template_data(source_booking)
-        new_estimate = EstimateCreator.create_estimate_with_relations(template_data, modifications, source_booking.estimate)
-        
-        pricing = BookingDuplicator.apply_pricing(
-            new_estimate.total_booking_cost,
-            modifications.get('compensation', 0),
-            modifications.get('commission', 0)
-        )
-        
-        booking_data = BookingDuplicator.create_booking_base('one_way', modifications['client_id'], source_booking)
-        booking_data.update({
-            'estimate': new_estimate,
-            'assigned_driver_id': modifications.get('assigned_driver_id'),
-            'assigned_partner_id': modifications.get('assigned_partner_id'),
-            **pricing
-        })
-        
-        new_booking = Booking.objects.create(**booking_data)
-        BookingDuplicator.create_log(new_booking, source_booking, user, modifications)
-        
-        return new_booking, 1
-    
-    @staticmethod
-    def duplicate_round_trip(source_booking, modifications, user):
-        # Duplique un booking round_trip avec calculs automatiques
-        shared_mods = modifications.get('shared_modifications', {})
-        outbound_mods = {**shared_mods, **modifications.get('outbound_modifications', {}), 'client_id': modifications['client_id']}
-        return_mods = {**shared_mods, **modifications.get('return_modifications', {}), 'client_id': modifications['client_id']}
-        
-        template = extract_booking_template_data(source_booking)
-        outbound_estimate = EstimateCreator.create_estimate_with_relations(
-            template['outbound_segment'], outbound_mods, source_booking.outbound_segment.estimate
-        )
-        
-        if should_create_separate_estimate(outbound_estimate, return_mods):
-            return_estimate = EstimateCreator.create_estimate_with_relations(
-                template['return_segment'], return_mods, source_booking.return_segment.estimate
-            )
-            estimates_created = 2
-        else:
-            return_estimate = outbound_estimate
-            estimates_created = 1
-        
-        booking_data = BookingDuplicator.create_booking_base('round_trip', modifications['client_id'], source_booking)
-        booking_data.update({
-            'estimate': None,
-            'assigned_driver_id': shared_mods.get('assigned_driver_id'),
-            'assigned_partner_id': shared_mods.get('assigned_partner_id')
-        })
-        
-        new_booking = Booking.objects.create(**booking_data)
-        
-        BookingDuplicator.create_segment(new_booking, 'outbound', outbound_estimate, outbound_mods, 1)
-        BookingDuplicator.create_segment(new_booking, 'return', return_estimate, return_mods, 2)
-        
-        new_booking.driver_sale_price = new_booking.effective_driver_sale_price
-        new_booking.partner_sale_price = new_booking.effective_partner_sale_price
-        new_booking.save(update_fields=['driver_sale_price', 'partner_sale_price'])
-        
-        BookingDuplicator.create_log(new_booking, source_booking, user, modifications)
-        
-        return new_booking, estimates_created
-    
-    @staticmethod
-    def create_segment(booking, segment_type, estimate, modifications, order):
-        # Crée un segment de booking
-        pricing = BookingDuplicator.apply_pricing(
-            estimate.total_booking_cost,
-            modifications.get('compensation', 0),
-            modifications.get('commission', 0)
-        )
-        
-        BookingSegment.objects.create(
-            booking=booking,
-            segment_type=segment_type,
-            estimate=estimate,
-            status='pending',
-            segment_cost=estimate.total_booking_cost,
-            compensation=pricing['compensation'],
-            commission=pricing['commission'],
-            order=order
-        )
-    
-    @staticmethod
-    def create_log(new_booking, source_booking, user, modifications):
-        # Crée le log de duplication de façon unifiée
-        if not user:
-            return
-        
-        try:
-            from courses.models import BookingLog
-            from utilisateurs.models import Client
-            
-            user_display = f"{user.first_name} {user.last_name}".strip() or user.username
-            client_name = Client.objects.get(id=modifications['client_id']).get_full_name()
-            
-            if new_booking.booking_type == 'one_way':
-                departure = new_booking.estimate.estimation_log.departure
-                destination = new_booking.estimate.estimation_log.destination
-                total_cost = new_booking.estimate.total_booking_cost
-            else:
-                outbound = new_booking.outbound_segment
-                departure = outbound.departure if outbound else "N/A"
-                destination = outbound.destination if outbound else "N/A"
-                total_cost = new_booking.total_cost_calculated
-            
-            message = (
-                f"Booking {new_booking.booking_number} créé par duplication de "
-                f"{source_booking.booking_number} par {user_display}. "
-                f"Client: {client_name}. Trajet: {shorten_address(departure)} → "
-                f"{shorten_address(destination)} ({total_cost}€)"
-            )
-            
-            BookingLog.objects.create(booking=new_booking, user=user, action=message)
-            
-        except Exception as e:
-            print(f"❌ Erreur log duplication: {e}")
-
-# ============== FONCTIONS PRINCIPALES ==============
-
-def generate_return_preview(booking_id):
-    # Génère un aperçu complet du trajet retour
-    booking, error = ValidationService.validate_booking_for_return_trip(booking_id)
-    if error:
-        raise ValueError(error)
-    
-    original_estimate = booking.estimate
-    original_log = original_estimate.estimation_log
-    base_cost = calculate_base_cost(original_estimate)
-    
-    original_booking_summary = {
-        'id': booking.id,
-        'booking_number': booking.booking_number,
-        'booking_type': booking.booking_type,
-        'status': booking.status,
-        'created_at': booking.created_at.isoformat() if booking.created_at else None,
-        'departure': original_log.departure,
-        'destination': original_log.destination,
-        'pickup_date': original_log.pickup_date.isoformat() if original_log.pickup_date else None,
-        'total_cost': original_estimate.total_booking_cost or 0,
-        'flight_number': original_estimate.flight_number,
-        'number_of_passengers': original_estimate.number_of_passengers,
-        'number_of_luggages': original_estimate.number_of_luggages
-    }
-    
-    return_trip_data = {
-        'departure': original_log.destination,
-        'destination': original_log.departure,
-        'pickup_date': timezone.now().isoformat(),
-        'estimated_cost': base_cost,
-        'flight_number': original_estimate.flight_number or '',
-        'message': '',
-        'number_of_passengers': original_estimate.number_of_passengers,
-        'number_of_luggages': original_estimate.number_of_luggages,
-        'waypoints': [],
-        'compensation': 0,
-        'commission': 0,
-        'status': 'pending'
-    }
-    
-    shared_data = {
-        'client': DataSerializer.serialize_client(booking.client),
-        'vehicle': DataSerializer.serialize_vehicle(original_estimate.user_choice),
-        'payment_method': DataSerializer.serialize_payment_method(original_estimate.payment_method),
-        'meeting_place': DataSerializer.serialize_meeting_place(original_estimate.meeting_place),
-        'passengers': [DataSerializer.serialize_passenger(p) for p in original_estimate.passengers.all()],
-        'estimate_attributes': [DataSerializer.serialize_estimate_attribute(a) for a in original_estimate.estimate_attribute.all()],
-        'assigned_driver': DataSerializer.serialize_driver(booking.assigned_driver),
-        'assigned_partner': DataSerializer.serialize_partner(booking.assigned_partner)
-    }
-    
-    cost_breakdown = {
-        'original_total_cost': original_estimate.total_booking_cost or 0,
-        'original_attributes_cost': original_estimate.total_attributes_cost or 0,
-        'calculated_base_cost': base_cost,
-        'return_estimated_cost': base_cost
-    }
-    
-    return {
-        'eligible': True,
-        'outbound_trip': original_booking_summary,
-        'return_trip': return_trip_data,
-        'shared_data': shared_data,
-        'cost_breakdown': cost_breakdown,
-        'transformation_options': {
-            'can_modify_vehicle': True,
-            'can_modify_payment_method': True,
-            'can_modify_passengers': True,
-            'can_modify_attributes': True,
-            'can_add_waypoints': True,
-            'can_modify_pricing': True,
-            'can_modify_schedule': True
-        }
-    }
-
-def convert_booking_to_round_trip(booking_id, return_data, user=None):
-    # Transforme un booking simple en aller-retour
-    with transaction.atomic():
-        booking, error = ValidationService.validate_booking_for_return_trip(booking_id)
-        if error:
-            raise ValueError(error)
-        
-        original_estimate = booking.estimate
-        if not original_estimate:
-            raise ValueError("Aucune estimation associée au booking")
-        
-        booking._skip_change_tracking = True
-        
-        logs_created = False
-        if user:
-            try:
-                user_display = f"{user.first_name} {user.last_name}".strip() or user.username
-                departure_short = shorten_address(return_data.get('departure', ''))
-                destination_short = shorten_address(return_data.get('destination', ''))
-                
-                pickup_date = return_data.get('pickup_date')
-                if pickup_date:
-                    date_short = format_date_business(pickup_date)
-                else:
-                    date_short = "Date non définie"
-                
-                base_message = (
-                    f"Réservation {booking.booking_number} transformée en aller-retour par {user_display}. "
-                    f"Retour: {departure_short} → {destination_short} le {date_short} ({return_data.get('total_cost', 0)}€)"
-                )
-                
-                additions = []
-                
-                if 'passengers' in return_data and return_data['passengers'].get('new'):
-                    new_count = len(return_data['passengers']['new'])
-                    additions.append(f"+{new_count} nouveaux passagers")
-                
-                if 'vehicle_id' in return_data:
-                    try:
-                        from configurations.models import Vehicle
-                        vehicle = Vehicle.objects.get(id=return_data['vehicle_id'])
-                        additions.append(f"véhicule {vehicle.brand} {vehicle.model}")
-                    except:
-                        additions.append("véhicule modifié")
-                
-                if return_data.get('commission', 0) > 0:
-                    additions.append(f"commission {return_data['commission']}%")
-                elif return_data.get('compensation', 0) > 0:
-                    additions.append(f"compensation {return_data['compensation']}€")
-                
-                final_message = f"{base_message}. {', '.join(additions)}." if additions else f"{base_message}."
-                
-                from courses.models import BookingLog
-                
-                BookingLog.objects.create(
-                    booking=booking,
-                    user=user,
-                    action=final_message
-                )
-                logs_created = True
-                
-            except Exception as log_error:
-                logs_created = False
-        
-        original_estimate.estimation_log.is_booked = True
-        original_estimate.estimation_log.save()
-        
-        outbound_segment = BookingSegment.objects.create(
-            booking=booking, segment_type='outbound', estimate=original_estimate,
-            status=booking.status, segment_cost=original_estimate.total_booking_cost or 0,
-            compensation=booking.compensation or 0, commission=booking.commission or 0, order=1
-        )
-        
-        if should_create_separate_estimate(original_estimate, return_data):
-            return_estimate = create_return_estimate(return_data, booking)
-            estimates_created = 1
-        else:
-            return_estimate = original_estimate
-            estimates_created = 0
-        
-        return_segment = BookingSegment.objects.create(
-            booking=booking, segment_type='return', estimate=return_estimate,
-            status='pending', segment_cost=return_data.get('total_cost', 0),
-            compensation=return_data.get('compensation', 0), 
-            commission=return_data.get('commission', 0), order=2
-        )
-        
-        booking.booking_type = 'round_trip'
-        booking.estimate = None
-        booking.driver_sale_price = booking.effective_driver_sale_price
-        booking.partner_sale_price = booking.effective_partner_sale_price
-        booking.save(update_fields=['booking_type', 'estimate', 'driver_sale_price', 'partner_sale_price'])
-        
-        return {
-            'booking_id': booking.id,
-            'booking_number': booking.booking_number,
-            'segments_created': 2,
-            'estimates_created': estimates_created,
-            'outbound_segment_id': outbound_segment.id,
-            'return_segment_id': return_segment.id,
-            'return_estimate_id': return_estimate.id,
-            'logs_created': logs_created,
-            'price_calculation': {
-                'old_driver_price': 0,
-                'new_driver_price': booking.driver_sale_price,
-                'old_partner_price': 0,
-                'new_partner_price': booking.partner_sale_price,
-                'total_cost_calculated': booking.total_cost_calculated
-            }
-        }
-
 def extract_booking_template_data(source_booking):
-    # Point d'entrée unifié pour extraction de template avec client original
+    from courses.Reservations.Reservations_details.helpers import BookingTemplateExtractor
     extractor = BookingTemplateExtractor()
     
     base_data = {
@@ -1523,7 +1105,6 @@ def extract_booking_template_data(source_booking):
         }
 
 def generate_duplicate_preview(booking_id):
-    # Génère l'aperçu de duplication
     source_booking, error = ValidationService.validate_booking_for_duplication(booking_id)
     if error:
         raise ValueError(error)
@@ -1532,8 +1113,8 @@ def generate_duplicate_preview(booking_id):
         'eligible': True,
         'duplicate_template': extract_booking_template_data(source_booking),
         'reference_data': {
-            'previous_driver': DataSerializer.serialize_driver(source_booking.assigned_driver),
-            'previous_partner': DataSerializer.serialize_partner(source_booking.assigned_partner)
+            'previous_driver': serialize_driver(source_booking.assigned_driver),
+            'previous_partner': serialize_partner(source_booking.assigned_partner)
         },
         'modification_options': {
             'all_fields_modifiable': True,
@@ -1544,7 +1125,8 @@ def generate_duplicate_preview(booking_id):
     }
 
 def duplicate_booking_unified(source_booking_id, modifications, user):
-    # Point d'entrée unifié optimisé pour la duplication
+    from courses.Reservations.Reservations_details.helpers import BookingDuplicator
+    
     source_booking, error = ValidationService.validate_booking_for_duplication(source_booking_id)
     if error:
         raise ValueError(error)
@@ -1571,10 +1153,10 @@ def duplicate_booking_unified(source_booking_id, modifications, user):
         }
 
 def format_round_trip_booking_data(booking, include_request_data=True):
-    # Formate les données d'un booking aller-retour
     if not booking.is_round_trip:
         return format_booking_data(booking=booking, include_request_data=include_request_data)
     
+    from courses.Reservations.Reservations_details.helpers import DataSerializer
     display_data = DataSerializer.serialize_booking(booking)
     
     display_data.update({
@@ -1613,24 +1195,20 @@ def format_round_trip_booking_data(booking, include_request_data=True):
     return result
 
 def format_duplication_booking_data(booking, include_request_data=True):
-    # Formate les données de booking pour la duplication
     if booking.booking_type == 'round_trip':
         return format_round_trip_booking_data(booking, include_request_data)
     
-    display_data = {}
-    
-    display_data.update({
+    display_data = {
         'id': booking.id,
         'booking_number': booking.booking_number,
         'booking_type': booking.booking_type,
         'status': booking.status,
-        'status_display': booking.get_status_display(),
         'created_at': booking.created_at.isoformat() if booking.created_at else None,
         'compensation': booking.compensation or 0,
         'commission': booking.commission or 0,
         'driver_sale_price': booking.driver_sale_price or 0,
         'partner_sale_price': booking.partner_sale_price or 0,
-    })
+    }
 
     if booking.client:
         display_data["user"] = {
@@ -1642,21 +1220,7 @@ def format_duplication_booking_data(booking, include_request_data=True):
             "client_type": booking.client.get_client_type_display() if hasattr(booking.client, 'get_client_type_display') else "Client",
             "user_type": "Client"
         }
-    else:
-        admin_user = None
-        if booking.estimate and booking.estimate.estimation_log:
-            admin_user = booking.estimate.estimation_log.user
-        
-        display_data["user"] = {
-            "name": admin_user.get_full_name() if admin_user else "Admin inconnu",
-            "email": admin_user.email if admin_user else "",
-            "first_name": admin_user.first_name if admin_user else "",
-            "last_name": admin_user.last_name if admin_user else "",
-            "phone_number": admin_user.phone_number if admin_user else "",
-            "client_type": "Réservation Administrateur",
-            "user_type": "Administrateur"
-        }
-    
+
     if booking.estimate:
         estimate = booking.estimate
         display_data.update({
@@ -1672,107 +1236,6 @@ def format_duplication_booking_data(booking, include_request_data=True):
         
         total_trajet = (estimate.total_booking_cost or 0) - (estimate.total_attributes_cost or 0)
         display_data['total_trajet'] = max(total_trajet, 0)
-        
-        if estimate.estimation_log:
-            estimation_log = estimate.estimation_log
-            display_data["estimation_log"] = {
-                "id": estimation_log.id,
-                "departure": estimation_log.departure,
-                "destination": estimation_log.destination,
-                "pickup_date": estimation_log.pickup_date.isoformat() if estimation_log.pickup_date else None,
-                "waypoints": estimation_log.waypoints or [],
-                "estimate_type": estimation_log.estimate_type,
-                "estimate_type_display": estimation_log.get_estimate_type_display() if hasattr(estimation_log, 'get_estimate_type_display') else estimation_log.estimate_type,
-                "distance_travelled": estimation_log.distance_travelled,
-                "duration_travelled": estimation_log.duration_travelled,
-                "is_booked": estimation_log.is_booked,
-                "created_at": estimation_log.created_at.isoformat() if estimation_log.created_at else None
-            }
-
-        if estimate.passengers.exists():
-            display_data["passengers"] = [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "phone_number": p.phone_number,
-                    "email": p.email or "Non renseigné",
-                    "is_main_client": p.is_main_client,
-                    "created_at": p.created_at.isoformat() if p.created_at else None
-                }
-                for p in estimate.passengers.all()
-            ]
-        else:
-            display_data["passengers"] = []
-
-        if estimate.estimate_attribute.exists():
-            display_data["estimate_attribute"] = [
-                {
-                    "id": a.id,
-                    "attribute_name": a.attribute.attribute_name,
-                    "unit_price": float(a.attribute.unit_price),
-                    "quantity": a.quantity,
-                    "total": float(a.total)
-                }
-                for a in estimate.estimate_attribute.all()
-            ]
-        else:
-            display_data["estimate_attribute"] = []
-
-        if estimate.user_choice and estimate.user_choice.vehicle_id:
-            try:
-                from configurations.models import Vehicle
-                vehicle = Vehicle.objects.get(id=estimate.user_choice.vehicle_id)
-                display_data["vehicle"] = {
-                    "id": vehicle.id,
-                    "brand": vehicle.brand,
-                    "model": vehicle.model,
-                    "vehicle_type": vehicle.vehicle_type.name if vehicle.vehicle_type else "Non défini"
-                }
-            except Vehicle.DoesNotExist:
-                display_data["vehicle"] = {
-                    "brand": "Véhicule",
-                    "model": "non trouvé",
-                    "vehicle_type": "Inconnu"
-                }
-        else:
-            display_data["vehicle"] = {
-                "brand": "Non",
-                "model": "défini",
-                "vehicle_type": "Inconnu"
-            }
-
-        if estimate.meeting_place:
-            try:
-                display_data["meeting_place"] = {
-                    "name": estimate.meeting_place.name if hasattr(estimate.meeting_place, 'name') else str(estimate.meeting_place),
-                    "address": getattr(estimate.meeting_place, 'address', '')
-                }
-            except:
-                display_data["meeting_place"] = "Lieu de rendez-vous défini"
-        else:
-            display_data["meeting_place"] = "Aucun lieu de rendez-vous spécifié"
-
-        if estimate.payment_method:
-            display_data["payment_method"] = {
-                "id": estimate.payment_method.id,
-                "name": estimate.payment_method.name,
-                "description": getattr(estimate.payment_method, 'description', '')
-            }
-        else:
-            display_data["payment_method"] = None
-
-    else:
-        display_data.update({
-            'total_booking_cost': 0,
-            'total_attributes_cost': 0,
-            'total_trajet': 0,
-            'passengers': [],
-            'estimate_attribute': [],
-            'estimation_log': {},
-            'vehicle': {"brand": "Non", "model": "défini", "vehicle_type": "Inconnu"},
-            'meeting_place': "Aucun lieu de rendez-vous spécifié",
-            'payment_method': None
-        })
 
     result = {"display_data": display_data}
     if include_request_data:
@@ -1784,10 +1247,7 @@ def format_duplication_booking_data(booking, include_request_data=True):
     
     return result
 
-# ============== UTILITAIRES TEXTE ==============
-
 def shorten_address(address):
-    # Raccourcit une adresse pour l'affichage
     if not address:
         return "Adresse non définie"
     
@@ -1805,7 +1265,6 @@ def shorten_address(address):
     return address[:45] + "..." if len(address) > 45 else address
 
 def format_date_business(date_input):
-    # Formate une date en format business français court
     try:
         from datetime import datetime
         
@@ -1826,27 +1285,38 @@ def format_date_business(date_input):
         
         return f"{dt.day} {month_short} {dt.year} à {dt.hour:02d}h{dt.minute:02d}"
     
-    except Exception as e:
+    except Exception:
         return str(date_input)[:10] if date_input else "Date non définie"
 
-def get_booking_creator_info(booking):
-    # Retourne les infos sur qui a créé la réservation
-    if booking.client is None:
-        admin_user = booking.estimate.estimation_log.user if booking.estimate and booking.estimate.estimation_log else None
-        return {
-            "type": "admin",
-            "user": admin_user,
-            "name": admin_user.get_full_name() if admin_user else "Admin inconnu"
-        }
-    else:
-        return {
-            "type": "client", 
-            "user": booking.client,
-            "name": booking.client.get_full_name()
-        }
-        
+def serialize_driver(driver):
+    if not driver:
+        return None
+    
+    return {
+        'id': driver.id,
+        'first_name': driver.first_name,
+        'last_name': driver.last_name,
+        'full_name': f"{driver.first_name} {driver.last_name}".strip(),
+        'phone_number': driver.phone_number,
+        'email': getattr(driver, 'email', None),
+        'license_number': getattr(driver, 'license_number', None),
+        'is_active': getattr(driver, 'is_active', None)
+    }
+
+def serialize_partner(partner):
+    if not partner:
+        return None
+    
+    return {
+        'id': partner.id,
+        'company_name': partner.company_name,
+        'contact_email': partner.contact_email,
+        'contact_phone': partner.contact_phone,
+        'address': getattr(partner, 'address', None),
+        'is_active': getattr(partner, 'is_active', None)
+    }
+
 def create_transformation_log_safe(booking, user, return_data):
-    # Version sécurisée pour créer le log de transformation
     try:
         from courses.models import BookingLog
         
@@ -1884,13 +1354,10 @@ def create_transformation_log_safe(booking, user, return_data):
         
         return True
         
-    except Exception as e:
+    except Exception:
         return False
 
-# ============== IMPORTS DÉFINIS EN LAZY POUR ÉVITER LES IMPORTS CIRCULAIRES ==============
-
 def get_communication_functions():
-    # Import lazy pour éviter l'import circulaire
     try:
         from courses.Reservations.communication_service import (
             send_duplication_communications, 
@@ -1898,5 +1365,124 @@ def get_communication_functions():
         )
         return send_duplication_communications, send_round_trip_communications
     except ImportError:
-        # Fallback si le service n'est pas disponible
         return None, None
+
+def format_booking_text(booking_data, user_type, booking):
+    booking_type_display = {
+        'one_way': 'Aller simple',
+        'round_trip': 'Aller-retour'
+    }.get(booking_data['booking_type'], booking_data['booking_type'])
+    
+    client_name = (f"{booking_data['client']['first_name']} {booking_data['client']['last_name']}"
+                   if booking_data['client'] else "Non défini")
+    
+    text = [
+        f"Réservation #{booking_data['booking_number']}",
+        f"Type: {booking_type_display}",
+        f"Statut: {booking_data.get('status_display', booking_data['status'])}",
+        f"Client: {client_name}",
+        "---",
+        "Trajet(s) :"
+    ]
+    
+    segments = booking_data.get('segments', [])
+    outbound_segment = next((s for s in segments if s['segment_type'] == 'outbound'), None)
+    return_segment = next((s for s in segments if s['segment_type'] == 'return'), None)
+    
+    def format_segment(segment, segment_label):
+        if not segment:
+            return []
+        estimate = segment.get('estimate', {})
+        estimation_log = estimate.get('estimation_log', {})
+        vehicle = estimate.get('vehicle', {})
+        passengers = estimate.get('passengers', [])
+        attributes = estimate.get('estimate_attribute', [])
+        
+        passenger_names = ", ".join(p['name'] for p in passengers) or "Aucun"
+        attribute_list = ", ".join(
+            f"{a['name']} (x{a['quantity']})" for a in attributes
+        ) or "Aucun"
+        
+        return [
+            f"{segment_label} :",
+            f"  Départ: {shorten_address(estimation_log.get('departure', 'N/A'))}",
+            f"  Destination: {shorten_address(estimation_log.get('destination', 'N/A'))}",
+            f"  Date: {format_date_business(segment.get('pickup_date', 'N/A'))}",
+            f"  Points de passage: {', '.join(estimation_log.get('waypoints', []) or ['N/A'])}",
+            f"  Type d'estimation: {estimation_log.get('estimate_type', 'N/A')}",
+            f"  Distance: {segment.get('distance_travelled', 0)} km",
+            f"  Durée: {segment.get('duration_travelled', 'N/A')}",
+            f"  Passagers: {len(passengers)} ({passenger_names})",
+            f"  Véhicule: {vehicle.get('brand', 'N/A')} {vehicle.get('model', 'N/A')} "
+            f"({vehicle.get('vehicle_type', 'N/A')})",
+            f"  Numéro de vol: {segment.get('flight_number', 'N/A')}",
+            f"  Message: {segment.get('message', 'Aucun')}",
+            f"  Attributs: {attribute_list}"
+        ]
+    
+    if booking_data['booking_type'] == 'round_trip' and outbound_segment and return_segment:
+        text.extend(format_segment(outbound_segment, "Aller"))
+        text.append("")
+        text.extend(format_segment(return_segment, "Retour"))
+    elif outbound_segment:
+        text.extend(format_segment(outbound_segment, "Trajet"))
+    
+    estimate = booking_data.get('estimate', {})
+    payment_method = estimate.get('payment_method', {})
+    text.extend([
+        "---",
+        f"Coût total: {estimate.get('total_booking_cost', 0)}€",
+        f"Coût des attributs: {estimate.get('total_attributes_cost', 0)}€",
+        f"Nombre de bagages: {estimate.get('number_of_luggages', 'N/A')}",
+        f"Nombre de passagers: {estimate.get('number_of_passengers', 0)}",
+        f"Numéro de dossier: {estimate.get('case_number', 'N/A')}",
+        f"Méthode de paiement: {payment_method.get('name', 'Non défini')}",
+        f"Statut de facturation: {booking_data.get('billing_status_display', booking_data.get('billing_status', 'N/A'))}",
+        f"Statut d'annulation: {booking_data.get('cancellation_status_display', booking_data.get('cancellation_status', 'N/A'))}",
+        f"Paiement: {booking_data.get('payment_timing_display', booking_data.get('payment_timing', 'N/A'))}"
+    ])
+    
+    if booking_data.get('assigned_driver'):
+        text.append(
+            f"Chauffeur assigné: {booking_data['assigned_driver']['first_name']} "
+            f"{booking_data['assigned_driver']['last_name']} "
+            f"({booking_data['assigned_driver'].get('email', 'N/A')}, {booking_data['assigned_driver']['phone_number']})"
+        )
+    
+    if booking_data.get('assigned_partner'):
+        text.append(
+            f"Partenaire assigné: {booking_data['assigned_partner']['company_name']} "
+            f"({booking_data['assigned_partner']['contact_email']}, {booking_data['assigned_partner']['contact_phone']})"
+        )
+    
+    if user_type == 'administrator':
+        text.extend([
+            f"Commission: {booking_data.get('effective_commission', booking_data.get('commission', 0))}%",
+            f"Compensation: {booking_data.get('effective_compensation', booking_data.get('compensation', 0))}€",
+            f"Prix chauffeur: {booking_data.get('driver_sale_price', 0)}€",
+            f"Prix partenaire: {booking_data.get('partner_sale_price', 0)}€"
+        ])
+    elif user_type == 'partner':
+        text.extend([
+            f"Commission: {booking_data.get('effective_commission', booking_data.get('commission', 0))}%",
+            f"Prix partenaire: {booking_data.get('partner_sale_price', 0)}€"
+        ])
+    elif user_type == 'driver' and 'driver_sale_price' in booking_data:
+        text.append(f"Prix chauffeur: {booking_data['driver_sale_price']}€")
+    
+    if booking_data.get('recurring_info') and user_type in ['administrator', 'client']:
+        rec_info = booking_data['recurring_info']
+        rec_type = rec_info.get('recurrence_type_display', 'N/A')
+        rec_details = ""
+        if rec_info.get('monthly_type'):
+            rec_details = rec_info.get('monthly_type_display', '')
+        elif rec_info.get('custom_pattern'):
+            rec_details = rec_info.get('custom_pattern_display', '')
+        text.append(f"Récurrence: {rec_type} ({rec_details})")
+    
+    text.extend([
+        f"Créé le: {format_date_business(booking_data['created_at'])}",
+        f"Archivé: {'Oui' if booking_data['is_archived'] else 'Non'}"
+    ])
+    
+    return "\n".join(text)

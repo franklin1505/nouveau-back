@@ -2,12 +2,11 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 class BookingPagination(PageNumberPagination):
-    page_size = 20
+    page_size = 12
     page_size_query_param = 'page_size'
     max_page_size = 100
     
     def get_paginated_response(self, data, sub_stats=None, filter_context=None):
-        """✅ CORRIGÉ : Réponse paginée étendue pour les statistiques de booking avec contexte de filtrage"""
         return Response({
             'status': 'success',
             'message': self._get_context_message(filter_context),
@@ -16,7 +15,7 @@ class BookingPagination(PageNumberPagination):
                 'sub_stats': sub_stats or {},
                 'pagination': {
                     'page': self.page.number,
-                    'page_size': self.page_size,  # ✅ CORRECTION : Utilise la vraie page_size
+                    'page_size': self.get_page_size(self.request),
                     'total_pages': self.page.paginator.num_pages,
                     'total_count': self.page.paginator.count,
                     'has_next': self.page.has_next(),
@@ -29,7 +28,6 @@ class BookingPagination(PageNumberPagination):
         })
     
     def _get_context_message(self, filter_context=None):
-        """Génère un message contextualisé selon le type de filtrage actif"""
         if not filter_context:
             return 'Réservations filtrées récupérées avec succès'
         

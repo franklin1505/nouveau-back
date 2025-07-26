@@ -9,7 +9,7 @@ from courses.Reservations.Reservations_details.recurring.helpers import BookingE
 from courses.models import Booking, RecurringBookingTemplate, RecurringBookingOccurrence
 from courses.Reservations.Reservations_details.helpers import (
     extract_booking_template_data, duplicate_booking_unified, 
-    calculate_trip_metrics, DataSerializer, format_booking_data, 
+    calculate_trip_metrics, format_booking_data, 
     format_round_trip_booking_data, format_duplication_booking_data
 )
 

@@ -2,6 +2,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from configurations.models import Attribute
 from courses.Logs.services import BookingChangeTracker, BookingLogService
+from courses.Reservations.Reservations_details.helpers import DataSerializer
 from courses.models import Booking, BookingSegment, Estimate, EstimationLog, Passenger, EstimateAttribute
 from utilisateurs.models import Client, Driver, Partner
 from django.db import transaction
@@ -57,7 +58,6 @@ class StatusWorkflowItemSerializer(serializers.Serializer):
     search_key = serializers.CharField()
 
 class RecurringInfoSerializer(serializers.Serializer):
-    """Serializer pour les informations de récurrence"""
     template_id = serializers.IntegerField()
     template_name = serializers.CharField()
     recurrence_type = serializers.CharField()
@@ -70,7 +70,6 @@ class RecurringInfoSerializer(serializers.Serializer):
     custom_pattern_display = serializers.CharField(required=False, allow_null=True)
 
 class RecurringWorkflowItemSerializer(serializers.Serializer):
-    """Serializer pour les éléments du workflow récurrence"""
     status = serializers.CharField()
     status_display = serializers.CharField()
     count = serializers.IntegerField()
@@ -79,7 +78,6 @@ class RecurringWorkflowItemSerializer(serializers.Serializer):
     parent_key = serializers.CharField(required=False, allow_null=True)
 
 class ExtendedMainStatsSerializer(serializers.Serializer):
-    """Extension des statistiques principales"""
     total_bookings = serializers.IntegerField()
     today_bookings = serializers.IntegerField()
     past_bookings = serializers.IntegerField()
@@ -89,92 +87,136 @@ class ExtendedMainStatsSerializer(serializers.Serializer):
     archived_bookings = serializers.IntegerField()
 
 class ExtendedGlobalBookingStatisticsSerializer(serializers.Serializer):
-    """Extension du serializer global avec récurrences"""
     main_stats = ExtendedMainStatsSerializer()
     status_workflow = StatusWorkflowItemSerializer(many=True)
     recurring_workflow = RecurringWorkflowItemSerializer(many=True, required=False)
     recurring_monthly_workflow = RecurringWorkflowItemSerializer(many=True, required=False)
     recurring_custom_workflow = RecurringWorkflowItemSerializer(many=True, required=False)
-    
+
     def to_representation(self, instance):
         if not isinstance(instance, dict):
-            raise serializers.ValidationError("Instance doit être un dictionnaire")
-        
-        required_fields = ['main_stats', 'status_workflow']
-        for field in required_fields:
+            raise serializers.ValidationError("Instance must be a dictionary")
+        for field in ['main_stats', 'status_workflow']:
             if field not in instance:
-                raise serializers.ValidationError(f"Instance doit contenir '{field}'")
-        
+                raise serializers.ValidationError(f"Instance must contain '{field}'")
         return super().to_representation(instance)
 
 class BookingSegmentSerializer(serializers.ModelSerializer):
-    """Serializer pour l'affichage des segments de booking"""
     departure = serializers.ReadOnlyField()
     destination = serializers.ReadOnlyField()
     pickup_date = serializers.ReadOnlyField()
     distance_travelled = serializers.ReadOnlyField()
     duration_travelled = serializers.ReadOnlyField()
+    vehicle = serializers.SerializerMethodField()
+    payment_method = serializers.SerializerMethodField()
+    meeting_place = serializers.SerializerMethodField()
     flight_number = serializers.CharField(source='estimate.flight_number', read_only=True)
     message = serializers.CharField(source='estimate.message', read_only=True)
     number_of_luggages = serializers.CharField(source='estimate.number_of_luggages', read_only=True)
     number_of_passengers = serializers.IntegerField(source='estimate.number_of_passengers', read_only=True)
-    
+
     class Meta:
         model = BookingSegment
-        fields = [
-            'id', 'segment_type', 'status', 'segment_cost', 
-            'compensation', 'commission', 'order', 'created_at',
-            'departure', 'destination', 'pickup_date', 
-            'distance_travelled', 'duration_travelled',
-            'flight_number', 'message', 'number_of_luggages', 'number_of_passengers'
-        ]
-        read_only_fields = [
-            'id', 'created_at', 'departure', 'destination', 'pickup_date',
-            'distance_travelled', 'duration_travelled', 'flight_number', 
-            'message', 'number_of_luggages', 'number_of_passengers'
-        ]
+        fields = ['id', 'segment_type', 'status', 'segment_cost', 'compensation', 'commission', 'order', 'created_at', 'departure', 'destination', 'pickup_date', 'distance_travelled', 'duration_travelled', 'flight_number','vehicle', 'payment_method', 'meeting_place', 'message', 'number_of_luggages', 'number_of_passengers']
+        read_only_fields = ['id', 'created_at', 'departure', 'destination', 'pickup_date', 'distance_travelled', 'duration_travelled', 'flight_number', 'message', 'number_of_luggages', 'number_of_passengers']
+
+    def get_vehicle(self, obj):
+        if not obj.estimate or not obj.estimate.user_choice:
+            return None
+        return DataSerializer.serialize_vehicle(obj.estimate.user_choice)
+
+    def get_payment_method(self, obj):
+        if not obj.estimate:
+            return None
+        return DataSerializer.serialize_payment_method(obj.estimate.payment_method)
+
+    def get_meeting_place(self, obj):
+        if not obj.estimate:
+            return None
+        return DataSerializer.serialize_meeting_place(obj.estimate.meeting_place)
 
 class ExtendedBookingCompleteSerializer(serializers.ModelSerializer):
-    """Extension avec informations de récurrence"""
     estimate = EstimateSerializer(read_only=True)
     client = ClientBasicSerializer(read_only=True)
     assigned_driver = DriverBasicSerializer(read_only=True)
     assigned_partner = PartnerBasicSerializer(read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    billing_status_display = serializers.CharField(source='get_billing_status_display', read_only=True)
-    cancellation_status_display = serializers.CharField(source='get_cancellation_status_display', read_only=True)
-    payment_timing_display = serializers.CharField(source='get_payment_timing_display', read_only=True)
-    effective_status = serializers.ReadOnlyField()
-    effective_compensation = serializers.ReadOnlyField()
-    effective_commission = serializers.ReadOnlyField()
-    effective_estimate = EstimateSerializer(read_only=True)
+    vehicle = serializers.SerializerMethodField()
+    payment_method = serializers.SerializerMethodField()
+    meeting_place = serializers.SerializerMethodField()
     segments = BookingSegmentSerializer(many=True, read_only=True)
-    total_cost = serializers.ReadOnlyField(source='total_cost_calculated')
     recurring_info = RecurringInfoSerializer(read_only=True, allow_null=True)
-    
+
     class Meta:
         model = Booking
         fields = [
-            'id', 'booking_number', 'booking_type', 'created_at', 
-            'status', 'status_display', 'effective_status',
-            'billing_status', 'billing_status_display', 
-            'cancellation_status', 'cancellation_status_display', 
-            'payment_timing', 'payment_timing_display', 
+            'id', 'booking_number', 'booking_type', 'created_at', 'status', 
+            'billing_status', 'cancellation_status', 'payment_timing', 
             'is_archived', 'is_driver_paid', 'is_partner_paid', 
-            'driver_sale_price', 'partner_sale_price', 
-            'compensation', 'commission',
-            'effective_compensation', 'effective_commission',
-            'total_cost', 'estimate', 'effective_estimate', 'segments',
+            'driver_sale_price', 'partner_sale_price', 'compensation', 'commission',
+            'vehicle', 'payment_method', 'meeting_place', 'estimate', 'segments', 
             'client', 'assigned_driver', 'assigned_partner', 'recurring_info'
         ]
-    
+
+    def get_vehicle(self, obj):
+        estimate = self._get_primary_estimate(obj)
+        if not estimate or not estimate.user_choice:
+            return None
+            
+        user_choice = estimate.user_choice
+        try:
+            from configurations.models import Vehicle
+            vehicle = Vehicle.objects.get(id=user_choice.vehicle_id) if user_choice.vehicle_id else None
+            
+            if vehicle:
+                return {
+                    'vehicle_type': vehicle.vehicle_type.name if vehicle.vehicle_type else 'N/A',
+                    'brand': vehicle.brand if vehicle.brand else 'N/A',
+                    'model': vehicle.model if vehicle.model else 'N/A'
+                }
+        except:
+            pass
+        
+        return {'vehicle_type': 'N/A', 'brand': 'N/A', 'model': 'N/A'}
+
+    def get_payment_method(self, obj):
+        estimate = self._get_primary_estimate(obj)
+        return DataSerializer.serialize_payment_method(estimate.payment_method) if estimate and estimate.payment_method else None
+
+    def get_meeting_place(self, obj):
+        estimate = self._get_primary_estimate(obj)
+        return DataSerializer.serialize_meeting_place(estimate.meeting_place) if estimate and estimate.meeting_place else None
+
+    def _get_primary_estimate(self, obj):
+        if obj.booking_type == 'one_way':
+            return obj.estimate
+        elif obj.booking_type == 'round_trip':
+            outbound = obj.segments.filter(segment_type='outbound').first()
+            return outbound.estimate if outbound else None
+        return None
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         
+        # Ajouter les données effectives pour les round_trip
+        if instance.booking_type == 'round_trip':
+            data.update({
+                'effective_status': instance.effective_status,
+                'effective_compensation': instance.effective_compensation,
+                'effective_commission': instance.effective_commission,
+                'total_cost': instance.total_cost_calculated,
+                'effective_driver_sale_price': instance.effective_driver_sale_price,
+                'effective_partner_sale_price': instance.effective_partner_sale_price
+            })
+        else:
+            # Pour one_way, utiliser les valeurs directes
+            data.update({
+                'total_cost': instance.estimate.total_booking_cost if instance.estimate else 0
+            })
+        
+        # Gestion des informations de récurrence
         if hasattr(instance, 'recurring_occurrence') and instance.recurring_occurrence:
             occurrence = instance.recurring_occurrence
             template = occurrence.template
-            
             recurring_data = {
                 'template_id': template.id,
                 'template_name': template.name,
@@ -185,17 +227,14 @@ class ExtendedBookingCompleteSerializer(serializers.ModelSerializer):
             }
             
             if template.recurrence_type == 'monthly' and hasattr(template, 'monthly_configuration'):
-                monthly_config = template.monthly_configuration
                 recurring_data.update({
-                    'monthly_type': monthly_config.monthly_type,
-                    'monthly_type_display': monthly_config.get_monthly_type_display()
+                    'monthly_type': template.monthly_configuration.monthly_type,
+                    'monthly_type_display': template.monthly_configuration.get_monthly_type_display()
                 })
-            
             elif template.recurrence_type == 'custom' and hasattr(template, 'custom_configuration'):
-                custom_config = template.custom_configuration
                 recurring_data.update({
-                    'custom_pattern': custom_config.pattern_type,
-                    'custom_pattern_display': custom_config.get_pattern_type_display()
+                    'custom_pattern': template.custom_configuration.pattern_type,
+                    'custom_pattern_display': template.custom_configuration.get_pattern_type_display()
                 })
             
             data['recurring_info'] = recurring_data
@@ -207,178 +246,159 @@ class ExtendedBookingCompleteSerializer(serializers.ModelSerializer):
 class PassengerUpdateSerializer(serializers.ModelSerializer):
     mode = serializers.ChoiceField(choices=['add', 'update', 'delete'], required=False, default='add')
     id = serializers.IntegerField(required=False, allow_null=True)
+    
     class Meta:
         model = Passenger
         fields = ['id', 'name', 'phone_number', 'email', 'is_main_client', 'mode']
-        extra_kwargs = {'name': {'required': False}, 'phone_number': {'required': False}, 'is_main_client': {'required': False}}
-    
+        extra_kwargs = {
+            'name': {'required': False}, 
+            'phone_number': {'required': False}, 
+            'is_main_client': {'required': False}
+        }
+
     def validate(self, attrs):
         mode = attrs.get('mode', 'add')
-        passenger_id = attrs.get('id')
-        if mode in ['update', 'delete'] and (passenger_id is None or not isinstance(passenger_id, int)):
-            raise serializers.ValidationError("ID requis et doit être un entier pour les modes 'update' et 'delete'")
-        if mode in ['add', 'update']:
-            if not attrs.get('name'):
-                raise serializers.ValidationError("Nom requis pour les modes 'add' et 'update'")
-            if not attrs.get('phone_number'):
-                raise serializers.ValidationError("Téléphone requis pour les modes 'add' et 'update'")
+        if mode in ['update', 'delete'] and not isinstance(attrs.get('id'), int):
+            raise serializers.ValidationError("ID required and must be an integer for 'update' and 'delete' modes")
+        if mode in ['add', 'update'] and not (attrs.get('name') and attrs.get('phone_number')):
+            raise serializers.ValidationError("Name and phone number required for 'add' and 'update' modes")
         return attrs
 
 class EstimateAttributeUpdateSerializer(serializers.ModelSerializer):
     attribute_id = serializers.IntegerField(required=False)
     mode = serializers.ChoiceField(choices=['add', 'update', 'delete'], required=False, default='add')
     id = serializers.IntegerField(required=False, allow_null=True)
+    
     class Meta:
         model = EstimateAttribute
         fields = ['id', 'attribute_id', 'quantity', 'mode']
         extra_kwargs = {'quantity': {'required': False, 'min_value': 1}}
-    
+
     def validate(self, attrs):
         mode = attrs.get('mode', 'add')
-        attr_id = attrs.get('id')
-        attribute_id = attrs.get('attribute_id')
-        if mode in ['update', 'delete'] and (attr_id is None or not isinstance(attr_id, int)):
-            raise serializers.ValidationError("ID requis et doit être un entier pour les modes 'update' et 'delete'")
-        if mode in ['add', 'update']:
-            if not attribute_id:
-                raise serializers.ValidationError("attribute_id requis pour les modes 'add' et 'update'")
-            if not attrs.get('quantity'):
-                raise serializers.ValidationError("Quantité requise pour les modes 'add' et 'update'")
+        if mode in ['update', 'delete'] and not isinstance(attrs.get('id'), int):
+            raise serializers.ValidationError("ID required and must be an integer for 'update' and 'delete' modes")
+        if mode in ['add', 'update'] and not (attrs.get('attribute_id') and attrs.get('quantity')):
+            raise serializers.ValidationError("attribute_id and quantity required for 'add' and 'update' modes")
         return attrs
 
 class EstimationLogUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = EstimationLog
         fields = ['departure', 'destination', 'pickup_date', 'waypoints', 'estimate_type', 'distance_travelled', 'duration_travelled']
-        extra_kwargs = {'departure': {'required': False}, 'destination': {'required': False}, 'pickup_date': {'required': False}, 'distance_travelled': {'required': False}, 'duration_travelled': {'required': False}}
+        extra_kwargs = {
+            'departure': {'required': False}, 
+            'destination': {'required': False}, 
+            'pickup_date': {'required': False}, 
+            'distance_travelled': {'required': False}, 
+            'duration_travelled': {'required': False}
+        }
 
 class EstimateUpdateSerializer(serializers.ModelSerializer):
     estimation_log = EstimationLogUpdateSerializer(required=False)
     passengers = PassengerUpdateSerializer(many=True, required=False)
     estimate_attribute = EstimateAttributeUpdateSerializer(many=True, required=False)
+    
     class Meta:
         model = Estimate
-        fields = ['flight_number', 'message', 'total_booking_cost', 'total_attributes_cost', 'number_of_luggages', 'number_of_passengers', 'case_number', 'is_payment_pending', 'estimation_log', 'passengers', 'estimate_attribute']
-    
+        fields = [
+            'flight_number', 'message', 'total_booking_cost', 'total_attributes_cost', 
+            'number_of_luggages', 'number_of_passengers', 'case_number', 'is_payment_pending', 
+            'estimation_log', 'passengers', 'estimate_attribute'
+        ]
+
     def validate_passengers(self, passengers_data):
-        validated_passengers = []
-        for passenger_data in passengers_data:
-            passenger_data_copy = passenger_data.copy()
-            passenger_serializer = PassengerUpdateSerializer(data=passenger_data_copy)
-            if not passenger_serializer.is_valid():
-                raise serializers.ValidationError(passenger_serializer.errors)
-            validated_passengers.append(passenger_serializer.validated_data)
-        return validated_passengers
+        return [PassengerUpdateSerializer(data=p).validated_data for p in passengers_data if PassengerUpdateSerializer(data=p).is_valid(raise_exception=True)]
 
 class BookingUpdateSerializer(serializers.ModelSerializer):
     estimate = EstimateUpdateSerializer(required=False)
     client_id = serializers.IntegerField(required=False, allow_null=True)
     assigned_driver_id = serializers.IntegerField(required=False, allow_null=True)
     assigned_partner_id = serializers.IntegerField(required=False, allow_null=True)
+    
     class Meta:
         model = Booking
-        fields = ['status', 'billing_status', 'cancellation_status', 'payment_timing', 'is_archived', 'is_driver_paid', 'is_partner_paid', 'driver_sale_price', 'partner_sale_price', 'compensation', 'commission', 'estimate', 'client_id', 'assigned_driver_id', 'assigned_partner_id']
-    
+        fields = [
+            'status', 'billing_status', 'cancellation_status', 'payment_timing', 
+            'is_archived', 'is_driver_paid', 'is_partner_paid', 'driver_sale_price', 
+            'partner_sale_price', 'compensation', 'commission', 'estimate', 
+            'client_id', 'assigned_driver_id', 'assigned_partner_id'
+        ]
+
     def validate_client_id(self, value):
-        if value is not None:
-            try:
-                Client.objects.get(id=value)
-            except Client.DoesNotExist:
-                raise serializers.ValidationError("Client introuvable")
+        if value is not None and not Client.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Client not found")
         return value
-    
+
     def validate_assigned_driver_id(self, value):
-        if value is not None:
-            try:
-                Driver.objects.get(id=value)
-            except Driver.DoesNotExist:
-                raise serializers.ValidationError("Chauffeur introuvable")
+        if value is not None and not Driver.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Driver not found")
         return value
-    
+
     def validate_assigned_partner_id(self, value):
-        if value is not None:
-            try:
-                Partner.objects.get(id=value)
-            except Partner.DoesNotExist:
-                raise serializers.ValidationError("Partenaire introuvable")
+        if value is not None and not Partner.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Partner not found")
         return value
-    
+
     def update(self, instance, validated_data):
         with transaction.atomic():
             old_state = BookingChangeTracker.capture_booking_state(instance)
-            
             estimate_data = validated_data.pop('estimate', None)
             client_id = validated_data.pop('client_id', None)
             assigned_driver_id = validated_data.pop('assigned_driver_id', None)
             assigned_partner_id = validated_data.pop('assigned_partner_id', None)
-            
+
             for field, value in validated_data.items():
                 setattr(instance, field, value)
-            
+
             if client_id is not None:
                 instance.client = Client.objects.get(id=client_id) if client_id else None
-            
             if assigned_driver_id is not None:
                 instance.assigned_driver = Driver.objects.get(id=assigned_driver_id) if assigned_driver_id else None
-            
             if assigned_partner_id is not None:
                 instance.assigned_partner = Partner.objects.get(id=assigned_partner_id) if assigned_partner_id else None
-            
+
             instance.save()
-            
             if estimate_data and instance.estimate:
                 self._update_estimate_complete(instance.estimate, estimate_data, instance)
-            
+
             instance.refresh_from_db()
-            
-            user = self.context['request'].user if hasattr(self, 'context') and 'request' in self.context else BookingLogService.get_current_user()
-            
-            if not (hasattr(instance, '_skip_change_tracking') and instance._skip_change_tracking):
+            user = self.context.get('request').user if self.context.get('request') else BookingLogService.get_current_user()
+            if not getattr(instance, '_skip_change_tracking', False):
                 BookingChangeTracker.detect_and_log_changes(instance, old_state, user)
-            
             return instance
-    
+
     def _update_estimate_complete(self, estimate_instance, estimate_data, booking_instance):
-        relations_modified = False
         estimation_log_data = estimate_data.pop('estimation_log', None)
         passengers_data = estimate_data.pop('passengers', None)
         estimate_attributes_data = estimate_data.pop('estimate_attribute', None)
-        
+
         for field, value in estimate_data.items():
-            if getattr(estimate_instance, field) != value:
-                relations_modified = True
             setattr(estimate_instance, field, value)
-        
+
         if estimate_data:
             estimate_instance.save()
-        
+
         if estimation_log_data and estimate_instance.estimation_log:
             for field, value in estimation_log_data.items():
-                if getattr(estimate_instance.estimation_log, field) != value:
-                    relations_modified = True
                 setattr(estimate_instance.estimation_log, field, value)
             estimate_instance.estimation_log.save()
-        
-        if passengers_data is not None:
-            relations_modified = True
+
+        if passengers_data:
             self._manage_passengers(estimate_instance, passengers_data, booking_instance)
-        
-        if estimate_attributes_data is not None:
-            relations_modified = True
+
+        if estimate_attributes_data:
             self._manage_estimate_attributes(estimate_instance, estimate_attributes_data)
-        
-        return relations_modified
-    
+
     def _manage_passengers(self, estimate_instance, passengers_data, booking_instance):
-        for passenger_data in passengers_data:
-            mode = passenger_data.get('mode', 'add')
-            passenger_id = passenger_data.get('id')
+        for p in passengers_data:
+            mode = p.get('mode', 'add')
             if mode == 'add':
-                self._add_passenger(estimate_instance, passenger_data, booking_instance)
+                self._add_passenger(estimate_instance, p, booking_instance)
             elif mode == 'update':
-                self._update_passenger(estimate_instance, passenger_data)
+                self._update_passenger(estimate_instance, p)
             elif mode == 'delete':
-                self._delete_passenger(estimate_instance, passenger_id)
+                self._delete_passenger(estimate_instance, p.get('id'))
 
     def _add_passenger(self, estimate_instance, passenger_data, booking_instance):
         passenger_create_data = {k: v for k, v in passenger_data.items() if k != 'mode'}
@@ -396,7 +416,7 @@ class BookingUpdateSerializer(serializers.ModelSerializer):
                     setattr(passenger, field, value)
             passenger.save()
         except Passenger.DoesNotExist:
-            raise serializers.ValidationError(f"Passager avec ID {passenger_id} introuvable")
+            raise serializers.ValidationError(f"Passenger with ID {passenger_id} not found")
 
     def _delete_passenger(self, estimate_instance, passenger_id):
         try:
@@ -404,45 +424,37 @@ class BookingUpdateSerializer(serializers.ModelSerializer):
             estimate_instance.passengers.remove(passenger)
             passenger.delete()
         except Passenger.DoesNotExist:
-            raise serializers.ValidationError(f"Passager avec ID {passenger_id} introuvable")
+            raise serializers.ValidationError(f"Passenger with ID {passenger_id} not found")
 
     def _manage_estimate_attributes(self, estimate_instance, attributes_data):
         for attr_data in attributes_data:
             mode = attr_data.get('mode', 'add')
-            attr_id = attr_data.get('id')
             if mode == 'add':
                 self._add_attribute(estimate_instance, attr_data)
             elif mode == 'update':
                 self._update_attribute(estimate_instance, attr_data)
             elif mode == 'delete':
-                self._delete_attribute(estimate_instance, attr_id)
+                self._delete_attribute(estimate_instance, attr_data.get('id'))
 
     def _add_attribute(self, estimate_instance, attr_data):
-        attribute_id = attr_data.get('attribute_id')
-        quantity = attr_data.get('quantity')
         try:
-            config_attribute = Attribute.objects.get(id=attribute_id)
-            new_attr = EstimateAttribute.objects.create(attribute=config_attribute, quantity=quantity)
+            config_attribute = Attribute.objects.get(id=attr_data.get('attribute_id'))
+            new_attr = EstimateAttribute.objects.create(attribute=config_attribute, quantity=attr_data.get('quantity'))
             estimate_instance.estimate_attribute.add(new_attr)
         except Attribute.DoesNotExist:
-            raise serializers.ValidationError(f"Attribut de configuration avec ID {attribute_id} introuvable")
+            raise serializers.ValidationError(f"Configuration attribute with ID {attr_data.get('attribute_id')} not found")
 
     def _update_attribute(self, estimate_instance, attr_data):
         attr_id = attr_data.get('id')
-        attribute_id = attr_data.get('attribute_id')
-        quantity = attr_data.get('quantity')
         try:
             estimate_attr = estimate_instance.estimate_attribute.get(id=attr_id)
-            if attribute_id:
-                config_attribute = Attribute.objects.get(id=attribute_id)
-                estimate_attr.attribute = config_attribute
-            if quantity:
-                estimate_attr.quantity = quantity
+            if attr_data.get('attribute_id'):
+                estimate_attr.attribute = Attribute.objects.get(id=attr_data.get('attribute_id'))
+            if attr_data.get('quantity'):
+                estimate_attr.quantity = attr_data.get('quantity')
             estimate_attr.save()
-        except EstimateAttribute.DoesNotExist:
-            raise serializers.ValidationError(f"Attribut d'estimation avec ID {attr_id} introuvable")
-        except Attribute.DoesNotExist:
-            raise serializers.ValidationError(f"Attribut de configuration avec ID {attribute_id} introuvable")
+        except (EstimateAttribute.DoesNotExist, Attribute.DoesNotExist) as e:
+            raise serializers.ValidationError(f"Attribute with ID {attr_id} not found" if isinstance(e, EstimateAttribute.DoesNotExist) else f"Configuration attribute with ID {attr_data.get('attribute_id')} not found")
 
     def _delete_attribute(self, estimate_instance, attr_id):
         try:
@@ -450,85 +462,52 @@ class BookingUpdateSerializer(serializers.ModelSerializer):
             estimate_instance.estimate_attribute.remove(estimate_attr)
             estimate_attr.delete()
         except EstimateAttribute.DoesNotExist:
-            raise serializers.ValidationError(f"Attribut avec ID {attr_id} introuvable")
+            raise serializers.ValidationError(f"Attribute with ID {attr_id} not found")
 
 class ReturnTripDataSerializer(serializers.Serializer):
-    """Serializer pour les données du trajet retour avec structures validées"""
-    departure = serializers.CharField(max_length=255, help_text="Lieu de départ du retour")
-    destination = serializers.CharField(max_length=255, help_text="Lieu de destination du retour")
-    pickup_date = serializers.DateTimeField(help_text="Date et heure de prise en charge du retour")
-    waypoints = serializers.ListField(child=serializers.CharField(), required=False, default=list, help_text="Points d'étape pour le retour")
-    flight_number = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True, help_text="Numéro de vol pour le retour")
-    message = serializers.CharField(required=False, allow_blank=True, allow_null=True, help_text="Message spécifique au retour")
-    number_of_luggages = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True, help_text="Nombre de bagages pour le retour")
-    number_of_passengers = serializers.IntegerField(required=False, allow_null=True, min_value=1, help_text="Nombre de passagers pour le retour")
-    total_cost = serializers.FloatField(min_value=0, help_text="Coût total du trajet retour")
-    total_attributes_cost = serializers.FloatField(min_value=0, default=0, help_text="Coût total des attributs du retour")
-    compensation = serializers.FloatField(required=False, default=0, min_value=0, help_text="Compensation pour le retour (en €)")
-    commission = serializers.FloatField(required=False, default=0, min_value=0, help_text="Commission pour le retour (en %)")
-    passengers = serializers.DictField(required=False, help_text="Passagers pour le retour")
-    estimate_attributes = serializers.ListField(child=serializers.DictField(), required=False, default=list, help_text="Attributs d'estimation pour le retour")
-    vehicle_id = serializers.IntegerField(required=False, allow_null=True, help_text="ID du véhicule pour le retour (optionnel)")
-    payment_method_id = serializers.IntegerField(required=False, allow_null=True, help_text="ID de la méthode de paiement pour le retour (optionnel)")
-    distance_travelled = serializers.FloatField(required=False, default=0, min_value=0, help_text="Distance parcourue pour le retour")
-    duration_travelled = serializers.CharField(required=False, default="0h0min", help_text="Durée du trajet retour")
+    departure = serializers.CharField(max_length=255)
+    destination = serializers.CharField(max_length=255)
+    pickup_date = serializers.DateTimeField()
+    waypoints = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    flight_number = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    message = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    number_of_luggages = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
+    number_of_passengers = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    total_cost = serializers.FloatField(min_value=0)
+    total_attributes_cost = serializers.FloatField(min_value=0, default=0)
+    compensation = serializers.FloatField(required=False, default=0, min_value=0)
+    commission = serializers.FloatField(required=False, default=0, min_value=0)
+    passengers = serializers.DictField(required=False)
+    estimate_attributes = serializers.ListField(child=serializers.DictField(), required=False, default=list)
+    vehicle_id = serializers.IntegerField(required=False, allow_null=True)
+    payment_method_id = serializers.IntegerField(required=False, allow_null=True)
+    distance_travelled = serializers.FloatField(required=False, default=0, min_value=0)
+    duration_travelled = serializers.CharField(required=False, default="0h0min")
 
     def validate_passengers(self, value):
         if not isinstance(value, dict):
-            raise serializers.ValidationError("Les passagers doivent être un objet avec 'existing' et/ou 'new'")
-        
+            raise serializers.ValidationError("Passengers must be an object with 'existing' and/or 'new'")
         existing_ids = value.get('existing', [])
         new_passengers = value.get('new', [])
-        
-        if existing_ids:
-            if not isinstance(existing_ids, list) or not all(isinstance(id, int) for id in existing_ids):
-                raise serializers.ValidationError("'existing' doit être une liste d'entiers")
-        
-        if new_passengers:
-            if not isinstance(new_passengers, list):
-                raise serializers.ValidationError("'new' doit être une liste")
-            
-            for passenger in new_passengers:
-                if not isinstance(passenger, dict):
-                    raise serializers.ValidationError("Chaque nouveau passager doit être un objet")
-                if not passenger.get('name') or not passenger.get('phone_number'):
-                    raise serializers.ValidationError("Nom et téléphone requis pour nouveaux passagers")
-        
+        if existing_ids and (not isinstance(existing_ids, list) or not all(isinstance(id, int) for id in existing_ids)):
+            raise serializers.ValidationError("'existing' must be a list of integers")
+        if new_passengers and (not isinstance(new_passengers, list) or any(not isinstance(p, dict) or not p.get('name') or not p.get('phone_number') for p in new_passengers)):
+            raise serializers.ValidationError("'new' must be a list of objects with 'name' and 'phone_number'")
         return value
 
     def validate_estimate_attributes(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Les attributs doivent être une liste")
-        
-        for attr in value:
-            if not isinstance(attr, dict):
-                raise serializers.ValidationError("Chaque attribut doit être un objet")
-            if 'attribute' not in attr or 'quantity' not in attr:
-                raise serializers.ValidationError("Chaque attribut doit avoir 'attribute' et 'quantity'")
-            if not isinstance(attr['attribute'], int) or not isinstance(attr['quantity'], int):
-                raise serializers.ValidationError("'attribute' et 'quantity' doivent être des entiers")
-            if attr['quantity'] < 1:
-                raise serializers.ValidationError("La quantité doit être supérieure à 0")
-        
+        if not isinstance(value, list) or any(not isinstance(attr, dict) or 'attribute' not in attr or 'quantity' not in attr or not isinstance(attr['attribute'], int) or not isinstance(attr['quantity'], int) or attr['quantity'] < 1 for attr in value):
+            raise serializers.ValidationError("Attributes must be a list of objects with valid 'attribute' and 'quantity'")
         return value
 
     def validate(self, data):
-        compensation = data.get('compensation', 0)
-        commission = data.get('commission', 0)
-        
-        if compensation > 0 and commission > 0:
-            raise serializers.ValidationError("Vous ne pouvez pas définir à la fois compensation et commission pour le retour.")
-        
-        total_cost = data.get('total_cost', 0)
-        total_attributes_cost = data.get('total_attributes_cost', 0)
-        
-        if total_attributes_cost > total_cost:
-            raise serializers.ValidationError("Le coût des attributs ne peut pas être supérieur au coût total.")
-        
+        if data.get('compensation', 0) > 0 and data.get('commission', 0) > 0:
+            raise serializers.ValidationError("Cannot set both compensation and commission for return trip")
+        if data.get('total_attributes_cost', 0) > data.get('total_cost', 0):
+            raise serializers.ValidationError("Attributes cost cannot exceed total cost")
         return data
 
 class DuplicateModificationSerializer(serializers.Serializer):
-    """Serializer pour les modifications de duplication one_way"""
     client_id = serializers.IntegerField()
     pickup_date = serializers.DateTimeField()
     departure = serializers.CharField()
@@ -547,86 +526,59 @@ class DuplicateModificationSerializer(serializers.Serializer):
     commission = serializers.DecimalField(max_digits=10, decimal_places=2, default=0)
     assigned_driver_id = serializers.IntegerField(required=False, allow_null=True)
     assigned_partner_id = serializers.IntegerField(required=False, allow_null=True)
-    passengers = serializers.DictField(child=serializers.ListField(), default=dict, help_text="Structure: {'existing': [1,2,3], 'new': [{'name': '...', 'phone_number': '...'}]}")
-    estimate_attributes = serializers.ListField(child=serializers.DictField(), default=list, help_text="Liste d'attributs: [{'attribute': 1, 'quantity': 2}]")
-    
+    passengers = serializers.DictField(child=serializers.ListField(), default=dict)
+    estimate_attributes = serializers.ListField(child=serializers.DictField(), default=list)
+
     def validate_passengers(self, value):
         if not isinstance(value, dict):
-            raise serializers.ValidationError("Les passagers doivent être un dictionnaire avec 'existing' et 'new'.")
-        
+            raise serializers.ValidationError("Passengers must be a dictionary with 'existing' and 'new'")
         existing = value.get('existing', [])
-        if not isinstance(existing, list):
-            raise serializers.ValidationError("'existing' doit être une liste d'IDs.")
-        
-        for passenger_id in existing:
-            if not isinstance(passenger_id, int):
-                raise serializers.ValidationError("Les IDs de passagers existants doivent être des entiers.")
-        
         new = value.get('new', [])
-        if not isinstance(new, list):
-            raise serializers.ValidationError("'new' doit être une liste de nouveaux passagers.")
-        
-        for passenger in new:
-            if not isinstance(passenger, dict):
-                raise serializers.ValidationError("Chaque nouveau passager doit être un dictionnaire.")
-            
-            if 'name' not in passenger or 'phone_number' not in passenger:
-                raise serializers.ValidationError("Chaque nouveau passager doit avoir 'name' et 'phone_number'.")
-        
+        if not isinstance(existing, list) or any(not isinstance(pid, int) for pid in existing):
+            raise serializers.ValidationError("'existing' must be a list of integer IDs")
+        if not isinstance(new, list) or any(not isinstance(p, dict) or 'name' not in p or 'phone_number' not in p for p in new):
+            raise serializers.ValidationError("'new' must be a list of objects with 'name' and 'phone_number'")
         return value
-    
+
     def validate_estimate_attributes(self, value):
-        for attr in value:
-            if 'attribute' not in attr or 'quantity' not in attr:
-                raise serializers.ValidationError("Chaque attribut doit avoir 'attribute' et 'quantity'.")
+        if any('attribute' not in attr or 'quantity' not in attr for attr in value):
+            raise serializers.ValidationError("Each attribute must have 'attribute' and 'quantity'")
         return value
 
 class RoundTripDuplicateModificationSerializer(serializers.Serializer):
-    """Serializer pour les modifications de duplication round_trip"""
     client_id = serializers.IntegerField(required=True)
     shared_modifications = serializers.DictField(required=False, default=dict)
     outbound_modifications = serializers.DictField(required=False, default=dict)
     return_modifications = serializers.DictField(required=False, default=dict)
-    
+
     def validate_client_id(self, value):
-        try:
-            Client.objects.get(id=value)
-            return value
-        except Client.DoesNotExist:
-            raise serializers.ValidationError("Client introuvable")
+        if not Client.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Client not found")
+        return value
 
 class RecurringSearchParamsSerializer(serializers.Serializer):
-    """Validation des paramètres de recherche pour récurrences"""
     scope = serializers.ChoiceField(
-        choices=['total', 'today', 'past', 'future', 'cancelled', 'recurring', 'archived'],
-        required=False,
-        default='total'
+        choices=['total', 'today', 'past', 'future', 'cancelled', 'recurring', 'archived'], 
+        required=False, default='total'
     )
     search_key = serializers.CharField(required=False, allow_blank=True)
     billing_status = serializers.ChoiceField(choices=Booking.BILLING_STATUS_CHOICES, required=False)
     cancellation_status = serializers.ChoiceField(choices=Booking.CANCELLATION_STATUS_CHOICES, required=False)
     payment_timing = serializers.ChoiceField(choices=Booking.PAYMENT_TIMING_CHOICES, required=False)
-    
+
     def validate_search_key(self, value):
-        if not value:
+        if not value or value == 'total':
             return value
-        
         valid_prefixes = ['status_', 'booking_type_', 'recurring_type_', 'recurring_monthly_', 'recurring_custom_']
-        
-        if value != 'total' and not any(value.startswith(prefix) for prefix in valid_prefixes):
-            raise serializers.ValidationError(f"search_key invalide. Doit commencer par: {', '.join(valid_prefixes)} ou être 'total'")
-        
+        if not any(value.startswith(p) for p in valid_prefixes):
+            raise serializers.ValidationError("Invalid search_key. Must start with specific prefixes or be 'total'")
         return value
-    
+
     def validate(self, attrs):
         scope = attrs.get('scope', 'total')
         search_key = attrs.get('search_key', '')
-        
-        if scope == 'recurring' and search_key:
-            if search_key != 'total' and not search_key.startswith('recurring_'):
-                raise serializers.ValidationError("Avec scope='recurring', search_key doit commencer par 'recurring_' ou être 'total'")
-        
+        if scope == 'recurring' and search_key and search_key != 'total' and not search_key.startswith('recurring_'):
+            raise serializers.ValidationError("With scope='recurring', search_key must start with 'recurring_' or be 'total'")
         if search_key.startswith('recurring_') and scope not in ['total', 'recurring']:
-            raise serializers.ValidationError("search_key de récurrence nécessite scope='total' ou scope='recurring'")
-        
+            raise serializers.ValidationError("Recurring search_key requires scope='total' or 'recurring'")
         return attrs

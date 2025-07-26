@@ -3,17 +3,12 @@ from django.urls import path
 from courses.Reservations.Reservations_details.recurring.views import RecurringCreateView, RecurringPreviewView, RecurringTypesView
 
 from .views import (
-    ExtendedGlobalBookingStatisticsView, ExtendedBookingStatisticsDetailView,
     BookingDetailView, BookingDuplicateCreateView, BookingDuplicatePreviewView, 
-    BookingReturnCreateView, BookingReturnPreviewView, BookingSegmentUpdateView, 
+    BookingReturnCreateView, BookingReturnPreviewView, BookingSegmentUpdateView, BookingTextDetailView, 
     BookingUpdateView, GlobalBookingStatisticsView, BookingStatisticsDetailView
 )
 
 urlpatterns = [
-    # Routes principales étendues (recommandées)
-    path('statistics/extended/', ExtendedGlobalBookingStatisticsView.as_view(), name='booking-extended-global-statistics'),
-    path('statistics/detail/extended/', ExtendedBookingStatisticsDetailView.as_view(), name='booking-extended-detail-statistics'),
-    
     # Routes existantes (compatibilité - utilisent maintenant les vues étendues)
     path('statistics/', GlobalBookingStatisticsView.as_view(), name='booking-global-statistics'),
     path('statistics/detail/', BookingStatisticsDetailView.as_view(), name='booking-detail-statistics'),
@@ -21,6 +16,8 @@ urlpatterns = [
     # Routes de gestion des bookings
     path('<int:booking_id>/update/', BookingUpdateView.as_view(), name='booking-update'),
     path('<int:booking_id>/detail/', BookingDetailView.as_view(), name='booking-detail'),
+    path('<int:booking_id>/getText/', BookingTextDetailView.as_view(), name='booking-text'),
+
     
     # Routes aller-retour
     path('<int:booking_id>/return-preview/', BookingReturnPreviewView.as_view(), name='booking-return-preview'),

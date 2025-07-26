@@ -2,6 +2,7 @@ import os
 from decouple import config
 from pathlib import Path
 from datetime import timedelta
+from corsheaders.middleware import CorsMiddleware
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -12,7 +13,7 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['127.0.0.1','localhost','*']
+ALLOWED_HOSTS = ['127.0.0.1','localhost','*', 'https://vss-cab.com/']
 
 # Application definition
 
@@ -157,6 +158,20 @@ USE_I18N = True
 USE_TZ = True
 
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -198,5 +213,7 @@ CHANNEL_LAYERS = {
     },
 }
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",  
+    "http://localhost:4200", 
+    "https://vss-cab.com", 
 ]
+SECURE_CROSS_ORIGIN_OPENER_POLICY = None
